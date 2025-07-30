@@ -1,6 +1,6 @@
 {
   "name": "mcp-mail-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP server for POP3/SMTP email access with environment-based configuration",
   "main": "dist/index.js",
   "type": "module",

@@ -9,7 +9,8 @@ export default {
   output: {
     file: 'dist/index.js',
     format: 'es',
-    sourcemap: false
+    sourcemap: false,
+    banner: '#!/usr/bin/env node'
   },
   external: [
     // 外部依赖，不打包进bundle
