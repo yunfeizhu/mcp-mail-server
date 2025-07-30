@@ -2,17 +2,20 @@
 
 **语言:** [English](README.md) | 中文
 
-一个支持POP3和SMTP协议的MCP服务器，可以在Cursor中使用来收发邮件。通过环境变量进行安全配置。
+一个支持IMAP和SMTP协议的MCP服务器，可以在Cursor中使用来收发邮件。通过环境变量进行安全配置。
 
 ## ✨ 功能特性
 
-### 📥 POP3功能（接收邮件）
-- 连接到POP3邮件服务器
-- 用户认证与TLS支持
-- 列出邮箱中的邮件
-- 获取特定邮件内容
-- 删除邮件
-- 获取邮件总数
+### 📥 IMAP功能（接收邮件）
+- 连接到IMAP邮件服务器，支持TLS
+- 打开和管理多个邮箱（文件夹）
+- 使用IMAP搜索条件搜索邮件
+- 通过UID获取完整邮件内容
+- 标记邮件为已读/未读
+- 从服务器删除邮件
+- 获取邮件数量和邮箱信息
+- 列出所有可用邮箱
+- 获取未读和最新邮件
 - 安全连接管理
 
 ### 📤 SMTP功能（发送邮件）  
@@ -47,9 +50,9 @@ npx mcp-mail-server
       "command": "npx",
       "args": ["mcp-mail-server"],
       "env": {
-        "POP3_HOST": "your-pop3-server.com",
-        "POP3_PORT": "995",
-        "POP3_SECURE": "true",
+        "IMAP_HOST": "your-imap-server.com",
+        "IMAP_PORT": "993",
+        "IMAP_SECURE": "true",
         "SMTP_HOST": "your-smtp-server.com",
         "SMTP_PORT": "465",
         "SMTP_SECURE": "true",
@@ -68,9 +71,9 @@ npx mcp-mail-server
     "mcp-mail-server": {
       "command": "mcp-mail-server",
       "env": {
-        "POP3_HOST": "your-pop3-server.com",
-        "POP3_PORT": "995",
-        "POP3_SECURE": "true",
+        "IMAP_HOST": "your-imap-server.com",
+        "IMAP_PORT": "993",
+        "IMAP_SECURE": "true",
         "SMTP_HOST": "your-smtp-server.com",
         "SMTP_PORT": "465", 
         "SMTP_SECURE": "true",
@@ -84,29 +87,75 @@ npx mcp-mail-server
 
 ## 🛠️ 可用工具
 
-### `connect_pop3`
-使用预配置设置连接到POP3邮件服务器。
+### `connect_imap`
+使用预配置设置连接到IMAP邮件服务器。
 
-### `list_messages`
-列出邮箱中的所有邮件及其元数据。
+### `open_mailbox`
+打开指定邮箱（文件夹）进行操作。
+
+**参数：**
+- `mailboxName` (string, 可选): 要打开的邮箱名称（默认："INBOX"）
+- `readOnly` (boolean, 可选): 以只读模式打开邮箱（默认：false）
+
+### `list_mailboxes`
+列出服务器上所有可用的邮箱（文件夹）。
+
+### `search_messages`
+使用IMAP搜索条件搜索邮件。
+
+**参数：**
+- `criteria` (array, 可选): IMAP搜索条件数组（默认：搜索所有邮件）
+  - 示例：`["UNSEEN"]`, `["FROM", "sender@example.com"]`, `["SUBJECT", "meeting"]`
+
+### `search_by_sender`
+搜索来自特定发件人的邮件。
+
+**参数：**
+- `sender` (string): 发件人邮箱地址
+
+### `search_by_subject`
+按主题关键词搜索邮件。
+
+**参数：**
+- `subject` (string): 要在主题中搜索的关键词
+
+### `search_since_date`
+搜索指定日期以来的邮件。
+
+**参数：**
+- `date` (string): 日期，支持多种格式如"April 20, 2010"、"20-Apr-2010"等
+
+### `get_messages`
+通过UID获取多个邮件。
+
+**参数：**
+- `uids` (array): 要获取的邮件UID数组
+- `markSeen` (boolean, 可选): 获取时是否标记为已读（默认：false）
 
 ### `get_message`
-获取特定邮件的完整内容。
+通过UID获取特定邮件的完整内容。
 
 **参数：**
-- `messageId` (number): 要获取的邮件ID
+- `uid` (number): 要获取的邮件UID
+- `markSeen` (boolean, 可选): 获取时是否标记为已读（默认：false）
 
 ### `delete_message`
-删除特定邮件。
+通过UID删除特定邮件。
 
 **参数：**
-- `messageId` (number): 要删除的邮件ID
+- `uid` (number): 要删除的邮件UID
 
 ### `get_message_count`
-获取邮箱中邮件的总数。
+获取当前邮箱中邮件的总数。
 
-### `disconnect`
-断开与POP3服务器的连接。
+### `get_unseen_messages`
+获取当前邮箱中所有未读邮件。
+
+### `get_recent_messages`
+获取当前邮箱中所有最新邮件。
+
+### `disconnect_imap`
+断开与IMAP服务器的连接。
 
 ### `connect_smtp`
 使用预配置设置连接到SMTP邮件服务器。
@@ -126,7 +175,7 @@ npx mcp-mail-server
 断开与SMTP服务器的连接。
 
 ### `quick_connect`
-使用预配置设置同时连接到POP3和SMTP服务器。
+使用预配置设置同时连接到IMAP和SMTP服务器。
 
 ## 💡 使用示例
 
@@ -147,24 +196,47 @@ npx mcp-mail-server
 
 ### 📥 接收邮件示例
 
-1. 连接到POP3服务器（如果没有使用快速连接）：
+1. 连接到IMAP服务器（如果没有使用快速连接）：
 ```
-连接到POP3服务器
-```
-
-2. 列出邮件：
-```
-显示我的邮件列表
+连接到IMAP服务器
 ```
 
-3. 获取特定邮件：
+2. 打开邮箱：
 ```
-显示邮件ID为1的邮件内容
+打开INBOX邮箱
+```
+或者
+```
+以只读模式打开已发送邮箱
 ```
 
-4. 删除邮件：
+3. 搜索邮件：
 ```
-删除邮件ID为1的邮件
+搜索未读邮件
+```
+或者
+```
+搜索来自 sender@example.com 的邮件
+```
+
+4. 获取特定邮件：
+```
+显示UID为123的邮件内容
+```
+
+5. 获取所有未读邮件：
+```
+显示所有未读邮件
+```
+
+6. 列出可用邮箱：
+```
+显示所有邮件文件夹
+```
+
+7. 删除邮件：
+```
+删除UID为123的邮件
 ```
 
 ### 📤 发送邮件示例
@@ -192,9 +264,9 @@ npx mcp-mail-server
 
 | 变量名 | 描述 | 示例值 |
 |--------|------|--------|
-| `POP3_HOST` | POP3服务器地址 | your-pop3-server.com |
-| `POP3_PORT` | POP3端口号 | 995 |
-| `POP3_SECURE` | 启用TLS (true/false) | true |
+| `IMAP_HOST` | IMAP服务器地址 | your-imap-server.com |
+| `IMAP_PORT` | IMAP端口号 | 993 |
+| `IMAP_SECURE` | 启用TLS (true/false) | true |
 | `SMTP_HOST` | SMTP服务器地址 | your-smtp-server.com |
 | `SMTP_PORT` | SMTP端口号 | 465 |
 | `SMTP_SECURE` | 启用SSL (true/false) | true |
@@ -238,9 +310,9 @@ npm run build
 4. 本地测试：
 ```bash
 # 设置环境变量
-export POP3_HOST=your-pop3-server.com
-export POP3_PORT=995
-export POP3_SECURE=true
+export IMAP_HOST=your-imap-server.com
+export IMAP_PORT=993
+export IMAP_SECURE=true
 export SMTP_HOST=your-smtp-server.com
 export SMTP_PORT=465
 export SMTP_SECURE=true

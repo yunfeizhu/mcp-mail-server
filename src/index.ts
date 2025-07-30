@@ -5,13 +5,13 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { POP3Client, POP3Config } from './pop3-client.js';
+import { IMAPClient, IMAPConfig } from './imap-client.js';
 import { SMTPClient, SMTPConfig, EmailOptions } from './smtp-client.js';
 import { EMAIL_CONFIG } from './config.js';
 
 class MailMCPServer {
   private server: Server;
-  private pop3Client: POP3Client | null = null;
+  private imapClient: IMAPClient | null = null;
   private smtpClient: SMTPClient | null = null;
 
   constructor() {
@@ -36,8 +36,8 @@ class MailMCPServer {
   private setupErrorHandling(): void {
     this.server.onerror = (error) => console.error('[MCP Error]', error);
     process.on('SIGINT', async () => {
-      if (this.pop3Client) {
-        this.pop3Client.disconnect();
+      if (this.imapClient) {
+        await this.imapClient.disconnect();
       }
       if (this.smtpClient) {
         await this.smtpClient.disconnect();
@@ -52,60 +52,234 @@ class MailMCPServer {
       return {
         tools: [
           {
-            name: 'connect_pop3',
-            description: 'Connect to POP3 email server (using preconfigured settings)',
+            name: 'connect_imap',
+            description: 'Connect to IMAP email server (using preconfigured settings)',
             inputSchema: {
               type: 'object',
               properties: {},
             },
           },
           {
-            name: 'list_messages',
-            description: 'List all messages in the mailbox',
+            name: 'open_mailbox',
+            description: 'Open a specific mailbox (folder)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                mailboxName: {
+                  type: 'string',
+                  description: 'Name of the mailbox to open (default: INBOX)',
+                  default: 'INBOX'
+                },
+                readOnly: {
+                  type: 'boolean',
+                  description: 'Open mailbox in read-only mode (default: false)',
+                  default: false
+                }
+              },
+            },
+          },
+          {
+            name: 'list_mailboxes',
+            description: 'List all available mailboxes (folders)',
             inputSchema: {
               type: 'object',
               properties: {},
+            },
+          },
+          {
+            name: 'search_messages',
+            description: 'Search messages using IMAP search criteria',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                criteria: {
+                  type: 'array',
+                  description: 'IMAP search criteria array. Examples: ["UNSEEN"], ["FROM", "user@example.com"], ["SUBJECT", "meeting"], ["BODY", "urgent"], ["SINCE", "April 20, 2010"], ["LARGER", "1000"], ["KEYWORD", "Important"], ["HEADER", "X-Custom", "value"], ["OR", "UNSEEN", ["SINCE", "April 20, 2010"]], ["!SEEN"] (negation). Default: searches ALL messages.',
+                  items: {}
+                }
+              },
+            },
+          },
+          {
+            name: 'search_by_sender',
+            description: 'Search messages from a specific sender',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                sender: {
+                  type: 'string',
+                  description: 'Email address of the sender to search for'
+                }
+              },
+              required: ['sender'],
+            },
+          },
+          {
+            name: 'search_by_subject',
+            description: 'Search messages by subject keywords',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                subject: {
+                  type: 'string',
+                  description: 'Keywords to search in email subject'
+                }
+              },
+              required: ['subject'],
+            },
+          },
+          {
+            name: 'search_since_date',
+            description: 'Search messages since a specific date',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                date: {
+                  type: 'string',
+                  description: 'Date in various formats like "April 20, 2010", "20-Apr-2010", or "2010-04-20"'
+                }
+              },
+              required: ['date'],
+            },
+          },
+          {
+            name: 'search_unread_from_sender',
+            description: 'Search unread messages from a specific sender (demonstrates AND logic)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                sender: {
+                  type: 'string',
+                  description: 'Email address of the sender'
+                }
+              },
+              required: ['sender'],
+            },
+          },
+          {
+            name: 'search_by_body',
+            description: 'Search messages containing specific text in the body',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                text: {
+                  type: 'string',
+                  description: 'Text to search for in message body'
+                }
+              },
+              required: ['text'],
+            },
+          },
+          {
+            name: 'search_larger_than',
+            description: 'Search messages larger than specified size',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                size: {
+                  type: 'number',
+                  description: 'Size in bytes'
+                }
+              },
+              required: ['size'],
+            },
+          },
+          {
+            name: 'search_with_keyword',
+            description: 'Search messages with specific keyword/flag',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                keyword: {
+                  type: 'string',
+                  description: 'Keyword to search for'
+                }
+              },
+              required: ['keyword'],
+            },
+          },
+          {
+            name: 'get_messages',
+            description: 'Retrieve multiple messages by their UIDs',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                uids: {
+                  type: 'array',
+                  description: 'Array of message UIDs to retrieve',
+                  items: {
+                    type: 'number'
+                  }
+                },
+                markSeen: {
+                  type: 'boolean',
+                  description: 'Mark messages as seen when retrieving (default: false)',
+                  default: false
+                }
+              },
+              required: ['uids'],
             },
           },
           {
             name: 'get_message',
-            description: 'Retrieve a specific email message',
+            description: 'Retrieve a specific email message by UID',
             inputSchema: {
               type: 'object',
               properties: {
-                messageId: {
+                uid: {
                   type: 'number',
-                  description: 'Message ID to retrieve',
+                  description: 'Message UID to retrieve',
                 },
+                markSeen: {
+                  type: 'boolean',
+                  description: 'Mark message as seen when retrieving (default: false)',
+                  default: false
+                }
               },
-              required: ['messageId'],
+              required: ['uid'],
             },
           },
           {
             name: 'delete_message',
-            description: 'Delete a specific email message',
+            description: 'Delete a specific email message by UID',
             inputSchema: {
               type: 'object',
               properties: {
-                messageId: {
+                uid: {
                   type: 'number',
-                  description: 'Message ID to delete',
+                  description: 'Message UID to delete',
                 },
               },
-              required: ['messageId'],
+              required: ['uid'],
             },
           },
           {
             name: 'get_message_count',
-            description: 'Get the total number of messages in the mailbox',
+            description: 'Get the total number of messages in current mailbox',
             inputSchema: {
               type: 'object',
               properties: {},
             },
           },
           {
-            name: 'disconnect',
-            description: 'Disconnect from the POP3 server',
+            name: 'get_unseen_messages',
+            description: 'Get all unseen (unread) messages',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+            },
+          },
+          {
+            name: 'get_recent_messages',
+            description: 'Get all recent messages',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+            },
+          },
+          {
+            name: 'disconnect_imap',
+            description: 'Disconnect from the IMAP server',
             inputSchema: {
               type: 'object',
               properties: {},
@@ -163,7 +337,7 @@ class MailMCPServer {
           },
           {
             name: 'quick_connect',
-            description: 'Connect to both POP3 and SMTP servers at once (using preconfigured settings)',
+            description: 'Connect to both IMAP and SMTP servers at once (using preconfigured settings)',
             inputSchema: {
               type: 'object',
               properties: {},
@@ -178,18 +352,42 @@ class MailMCPServer {
 
       try {
         switch (name) {
-          case 'connect_pop3':
-            return await this.handleConnect();
-          case 'list_messages':
-            return await this.handleListMessages();
+          case 'connect_imap':
+            return await this.handleConnectIMAP();
+          case 'open_mailbox':
+            return await this.handleOpenMailbox(args);
+          case 'list_mailboxes':
+            return await this.handleListMailboxes();
+          case 'search_messages':
+            return await this.handleSearchMessages(args);
+          case 'search_by_sender':
+            return await this.handleSearchBySender(args);
+          case 'search_by_subject':
+            return await this.handleSearchBySubject(args);
+          case 'search_since_date':
+            return await this.handleSearchSinceDate(args);
+          case 'search_unread_from_sender':
+            return await this.handleSearchUnreadFromSender(args);
+          case 'search_by_body':
+            return await this.handleSearchByBody(args);
+          case 'search_larger_than':
+            return await this.handleSearchLargerThan(args);
+          case 'search_with_keyword':
+            return await this.handleSearchWithKeyword(args);
+          case 'get_messages':
+            return await this.handleGetMessages(args);
           case 'get_message':
             return await this.handleGetMessage(args);
           case 'delete_message':
             return await this.handleDeleteMessage(args);
           case 'get_message_count':
             return await this.handleGetMessageCount();
-          case 'disconnect':
-            return await this.handleDisconnect();
+          case 'get_unseen_messages':
+            return await this.handleGetUnseenMessages();
+          case 'get_recent_messages':
+            return await this.handleGetRecentMessages();
+          case 'disconnect_imap':
+            return await this.handleDisconnectIMAP();
           case 'connect_smtp':
             return await this.handleConnectSMTP();
           case 'send_email':
@@ -214,19 +412,18 @@ class MailMCPServer {
     });
   }
 
-  private async handleConnect() {
-    const config: POP3Config = EMAIL_CONFIG.POP3;
+  private async handleConnectIMAP() {
+    const config: IMAPConfig = EMAIL_CONFIG.IMAP;
 
     try {
-      this.pop3Client = new POP3Client(config);
-      await this.pop3Client.connect();
-      await this.pop3Client.authenticate();
+      this.imapClient = new IMAPClient(config);
+      await this.imapClient.connect();
 
       return {
         content: [
           {
             type: 'text',
-            text: `Successfully connected to POP3 server ${config.host}:${config.port}`,
+            text: `Successfully connected to IMAP server ${config.host}:${config.port}`,
           },
         ],
       };
@@ -235,100 +432,512 @@ class MailMCPServer {
     }
   }
 
-  private async handleListMessages() {
-    if (!this.pop3Client) {
-      throw new Error('Not connected to POP3 server');
+  private async handleOpenMailbox(args: any) {
+    if (!this.imapClient) {
+      throw new Error('Not connected to IMAP server');
     }
 
-    const messages = await this.pop3Client.listMessages();
-    
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(messages, null, 2),
-        },
-      ],
-    };
+    const mailboxName = args.mailboxName || 'INBOX';
+    const readOnly = args.readOnly || false;
+
+    try {
+      const mailboxInfo = await this.imapClient.openBox(mailboxName, readOnly);
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(mailboxInfo, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Failed to open mailbox: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async handleListMailboxes() {
+    if (!this.imapClient) {
+      throw new Error('Not connected to IMAP server');
+    }
+
+    try {
+      const boxes = await this.imapClient.getBoxes();
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(boxes, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Failed to list mailboxes: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async handleSearchMessages(args: any) {
+    if (!this.imapClient) {
+      throw new Error('Not connected to IMAP server');
+    }
+
+    // 如果没有提供criteria参数，或者criteria为空数组，使用['ALL']
+    let criteria = args.criteria;
+    if (!criteria || !Array.isArray(criteria) || criteria.length === 0) {
+      criteria = ['ALL'];
+    }
+
+    try {
+      console.error(`[IMAP] Searching with criteria:`, criteria);
+      const uids = await this.imapClient.search(criteria);
+      
+      const result = {
+        searchCriteria: criteria,
+        matchingUIDs: uids,
+        totalMatches: uids.length,
+        note: criteria.length === 1 && criteria[0] === 'ALL' ? 
+          'Showing all messages. Use specific criteria like ["UNSEEN"] to filter results.' : 
+          'Search completed with specified criteria.'
+      };
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Search failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async handleSearchBySender(args: any) {
+    if (!this.imapClient) {
+      throw new Error('Not connected to IMAP server');
+    }
+
+    const sender = args.sender;
+    if (!sender) {
+      throw new Error('sender parameter is required');
+    }
+
+    try {
+      // 正确的node-imap FROM搜索语法
+      const criteria = ['FROM', sender];
+      console.error(`[IMAP] Searching messages from sender:`, sender);
+      const uids = await this.imapClient.search(criteria);
+      
+      const result = {
+        searchType: 'By Sender',
+        sender: sender,
+        searchCriteria: criteria,
+        matchingUIDs: uids,
+        totalMatches: uids.length
+      };
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Search by sender failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async handleSearchBySubject(args: any) {
+    if (!this.imapClient) {
+      throw new Error('Not connected to IMAP server');
+    }
+
+    const subject = args.subject;
+    if (!subject) {
+      throw new Error('subject parameter is required');
+    }
+
+    try {
+      // 根据文档，SUBJECT是直接的字符串搜索类型
+      const criteria = ['SUBJECT', subject];
+      console.error(`[IMAP] Searching messages with subject:`, subject);
+      const uids = await this.imapClient.search(criteria);
+      
+      const result = {
+        searchType: 'By Subject',
+        subjectKeywords: subject,
+        searchCriteria: criteria,
+        matchingUIDs: uids,
+        totalMatches: uids.length
+      };
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Search by subject failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async handleSearchSinceDate(args: any) {
+    if (!this.imapClient) {
+      throw new Error('Not connected to IMAP server');
+    }
+
+    const date = args.date;
+    if (!date) {
+      throw new Error('date parameter is required');
+    }
+
+    try {
+      // 正确的node-imap SINCE搜索语法
+      const criteria = ['SINCE', date];
+      console.error(`[IMAP] Searching messages since date:`, date);
+      const uids = await this.imapClient.search(criteria);
+      
+      const result = {
+        searchType: 'Since Date',
+        sinceDate: date,
+        searchCriteria: criteria,
+        matchingUIDs: uids,
+        totalMatches: uids.length,
+        note: 'Date format should be like "April 20, 2010" or "20-Apr-2010"'
+      };
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Search since date failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async handleSearchUnreadFromSender(args: any) {
+    if (!this.imapClient) {
+      throw new Error('Not connected to IMAP server');
+    }
+
+    const sender = args.sender;
+    if (!sender) {
+      throw new Error('sender parameter is required');
+    }
+
+    try {
+      // 根据文档，默认所有条件都是AND组合
+      // 所以这会搜索既是UNSEEN又是FROM sender的邮件
+      const criteria = ['UNSEEN', ['FROM', sender]];
+      console.error(`[IMAP] Searching unread messages from sender:`, sender);
+      const uids = await this.imapClient.search(criteria);
+      
+      const result = {
+        searchType: 'Unread messages from specific sender',
+        sender: sender,
+        searchCriteria: criteria,
+        matchingUIDs: uids,
+        totalMatches: uids.length,
+        note: 'By default, all criteria are ANDed together - finds messages that are BOTH unread AND from the specified sender'
+      };
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Search unread from sender failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async handleSearchByBody(args: any) {
+    if (!this.imapClient) {
+      throw new Error('Not connected to IMAP server');
+    }
+
+    const text = args.text;
+    if (!text) {
+      throw new Error('text parameter is required');
+    }
+
+    try {
+      const criteria = ['BODY', text];
+      console.error(`[IMAP] Searching messages with body text:`, text);
+      const uids = await this.imapClient.search(criteria);
+      
+      const result = {
+        searchType: 'By Body Text',
+        bodyText: text,
+        searchCriteria: criteria,
+        matchingUIDs: uids,
+        totalMatches: uids.length
+      };
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Search by body failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async handleSearchLargerThan(args: any) {
+    if (!this.imapClient) {
+      throw new Error('Not connected to IMAP server');
+    }
+
+    const size = args.size;
+    if (typeof size !== 'number') {
+      throw new Error('size parameter must be a number');
+    }
+
+    try {
+      const criteria = ['LARGER', size.toString()];
+      console.error(`[IMAP] Searching messages larger than:`, size, 'bytes');
+      const uids = await this.imapClient.search(criteria);
+      
+      const result = {
+        searchType: 'Larger Than Size',
+        minimumSize: size,
+        searchCriteria: criteria,
+        matchingUIDs: uids,
+        totalMatches: uids.length
+      };
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Search larger than failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async handleSearchWithKeyword(args: any) {
+    if (!this.imapClient) {
+      throw new Error('Not connected to IMAP server');
+    }
+
+    const keyword = args.keyword;
+    if (!keyword) {
+      throw new Error('keyword parameter is required');
+    }
+
+    try {
+      const criteria = ['KEYWORD', keyword];
+      console.error(`[IMAP] Searching messages with keyword:`, keyword);
+      const uids = await this.imapClient.search(criteria);
+      
+      const result = {
+        searchType: 'With Keyword',
+        keyword: keyword,
+        searchCriteria: criteria,
+        matchingUIDs: uids,
+        totalMatches: uids.length
+      };
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Search with keyword failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async handleGetMessages(args: any) {
+    if (!this.imapClient) {
+      throw new Error('Not connected to IMAP server');
+    }
+
+    const uids = args.uids;
+    if (!Array.isArray(uids)) {
+      throw new Error('uids must be an array of numbers');
+    }
+
+    const markSeen = args.markSeen || false;
+
+    try {
+      const messages = await this.imapClient.fetchMessages(uids, { markSeen });
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(messages, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Failed to get messages: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private async handleGetMessage(args: any) {
-    if (!this.pop3Client) {
-      throw new Error('Not connected to POP3 server');
+    if (!this.imapClient) {
+      throw new Error('Not connected to IMAP server');
     }
 
-    const messageId = args.messageId;
-    if (typeof messageId !== 'number') {
-      throw new Error('messageId must be a number');
+    const uid = args.uid;
+    if (typeof uid !== 'number') {
+      throw new Error('uid must be a number');
     }
 
-    const message = await this.pop3Client.retrieveMessage(messageId);
-    
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(message, null, 2),
-        },
-      ],
-    };
+    const markSeen = args.markSeen || false;
+
+    try {
+      const message = await this.imapClient.getMessage(uid);
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(message, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Failed to get message: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private async handleDeleteMessage(args: any) {
-    if (!this.pop3Client) {
-      throw new Error('Not connected to POP3 server');
+    if (!this.imapClient) {
+      throw new Error('Not connected to IMAP server');
     }
 
-    const messageId = args.messageId;
-    if (typeof messageId !== 'number') {
-      throw new Error('messageId must be a number');
+    const uid = args.uid;
+    if (typeof uid !== 'number') {
+      throw new Error('uid must be a number');
     }
 
-    await this.pop3Client.deleteMessage(messageId);
-    
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Message ${messageId} marked for deletion`,
-        },
-      ],
-    };
+    try {
+      await this.imapClient.deleteMessage(uid);
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Message with UID ${uid} deleted successfully`,
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Failed to delete message: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private async handleGetMessageCount() {
-    if (!this.pop3Client) {
-      throw new Error('Not connected to POP3 server');
+    if (!this.imapClient) {
+      throw new Error('Not connected to IMAP server');
     }
 
-    const count = await this.pop3Client.getMessageCount();
-    
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Total messages: ${count}`,
-        },
-      ],
-    };
+    try {
+      const count = await this.imapClient.getMessageCount();
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Total messages: ${count}`,
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Failed to get message count: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
-  private async handleDisconnect() {
-    if (!this.pop3Client) {
-      throw new Error('Not connected to POP3 server');
+  private async handleGetUnseenMessages() {
+    if (!this.imapClient) {
+      throw new Error('Not connected to IMAP server');
     }
 
-    await this.pop3Client.quit();
-    this.pop3Client = null;
-    
-    return {
-      content: [
-        {
-          type: 'text',
-          text: 'Disconnected from POP3 server',
-        },
-      ],
-    };
+    try {
+      const messages = await this.imapClient.getUnseenMessages();
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(messages, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Failed to get unseen messages: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async handleGetRecentMessages() {
+    if (!this.imapClient) {
+      throw new Error('Not connected to IMAP server');
+    }
+
+    try {
+      const messages = await this.imapClient.getRecentMessages();
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(messages, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Failed to get recent messages: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async handleDisconnectIMAP() {
+    if (!this.imapClient) {
+      throw new Error('Not connected to IMAP server');
+    }
+
+    try {
+      await this.imapClient.disconnect();
+      this.imapClient = null;
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: 'Disconnected from IMAP server',
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Failed to disconnect: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private async handleConnectSMTP() {
@@ -405,19 +1014,18 @@ class MailMCPServer {
 
   private async handleQuickConnect() {
     const results = [];
-    let pop3Success = false;
+    let imapSuccess = false;
     let smtpSuccess = false;
 
-    // 连接POP3
+    // 连接IMAP
     try {
-      const pop3Config: POP3Config = EMAIL_CONFIG.POP3;
-      this.pop3Client = new POP3Client(pop3Config);
-      await this.pop3Client.connect();
-      await this.pop3Client.authenticate();
-      results.push(`✅ POP3: Successfully connected to ${pop3Config.host}:${pop3Config.port}`);
-      pop3Success = true;
+      const imapConfig: IMAPConfig = EMAIL_CONFIG.IMAP;
+      this.imapClient = new IMAPClient(imapConfig);
+      await this.imapClient.connect();
+      results.push(`✅ IMAP: Successfully connected to ${imapConfig.host}:${imapConfig.port}`);
+      imapSuccess = true;
     } catch (error) {
-      results.push(`❌ POP3: Failed to connect - ${error instanceof Error ? error.message : String(error)}`);
+      results.push(`❌ IMAP: Failed to connect - ${error instanceof Error ? error.message : String(error)}`);
     }
 
     // 连接SMTP
@@ -431,7 +1039,7 @@ class MailMCPServer {
       results.push(`❌ SMTP: Failed to connect - ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    const summary = `Connection Summary: POP3 ${pop3Success ? '✅' : '❌'} | SMTP ${smtpSuccess ? '✅' : '❌'}`;
+    const summary = `Connection Summary: IMAP ${imapSuccess ? '✅' : '❌'} | SMTP ${smtpSuccess ? '✅' : '❌'}`;
     results.push('', summary);
 
     return {
@@ -447,9 +1055,9 @@ class MailMCPServer {
   private validateConfig(): void {
     try {
       console.error('=== MCP Mail Server Configuration ===');
-      console.error(`POP3: ${EMAIL_CONFIG.POP3.host}:${EMAIL_CONFIG.POP3.port} (TLS: ${EMAIL_CONFIG.POP3.tls})`);
+      console.error(`IMAP: ${EMAIL_CONFIG.IMAP.host}:${EMAIL_CONFIG.IMAP.port} (TLS: ${EMAIL_CONFIG.IMAP.tls})`);
       console.error(`SMTP: ${EMAIL_CONFIG.SMTP.host}:${EMAIL_CONFIG.SMTP.port} (Secure: ${EMAIL_CONFIG.SMTP.secure})`);
-      console.error(`User: ${EMAIL_CONFIG.POP3.username}`);
+      console.error(`User: ${EMAIL_CONFIG.IMAP.username}`);
       console.error('Password: [CONFIGURED]');
       console.error('Configuration loaded successfully');
     } catch (error) {

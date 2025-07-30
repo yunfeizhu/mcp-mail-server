@@ -30,13 +30,13 @@ function getRequiredNumberEnvVar(name: string): number {
 }
 
 export const EMAIL_CONFIG = {
-  // POP3配置（接收邮件）
-  POP3: {
-    host: getRequiredEnvVar('POP3_HOST'),
-    port: getRequiredNumberEnvVar('POP3_PORT'),
+  // IMAP配置（接收邮件）
+  IMAP: {
+    host: getRequiredEnvVar('IMAP_HOST'),
+    port: getRequiredNumberEnvVar('IMAP_PORT'),
     username: getRequiredEnvVar('EMAIL_USER'),
     password: getRequiredEnvVar('EMAIL_PASS'),
-    tls: getRequiredBooleanEnvVar('POP3_SECURE')
+    tls: getRequiredBooleanEnvVar('IMAP_SECURE')
   },
   
   // SMTP配置（发送邮件）

@@ -2,17 +2,20 @@
 
 **Language:** English | [中文](README-zh.md)
 
-A Model Context Protocol (MCP) server that enables email operations through POP3 and SMTP protocols in Cursor AI. Features secure environment-based configuration for seamless email management.
+A Model Context Protocol (MCP) server that enables email operations through IMAP and SMTP protocols in Cursor AI. Features secure environment-based configuration for seamless email management.
 
 ### ✨ Features
 
-#### 📥 POP3 Features (Receive Emails)
-- Connect to POP3 email servers
-- User authentication with TLS support
-- List all messages in mailbox
-- Retrieve specific email content
+#### 📥 IMAP Features (Receive Emails)
+- Connect to IMAP email servers with TLS support
+- Open and manage multiple mailboxes (folders)
+- Search messages using IMAP search criteria
+- Retrieve messages by UID with full content
+- Mark messages as seen/unseen
 - Delete messages from server
-- Get total message count
+- Get message counts and mailbox information
+- List all available mailboxes
+- Get unseen and recent messages
 - Secure connection management
 
 #### 📤 SMTP Features (Send Emails)  
@@ -47,9 +50,9 @@ Add the following configuration to your Cursor MCP settings:
       "command": "npx",
       "args": ["mcp-mail-server"],
       "env": {
-        "POP3_HOST": "your-pop3-server.com",
-        "POP3_PORT": "995",
-        "POP3_SECURE": "true",
+        "IMAP_HOST": "your-imap-server.com",
+        "IMAP_PORT": "993",
+        "IMAP_SECURE": "true",
         "SMTP_HOST": "your-smtp-server.com",
         "SMTP_PORT": "465",
         "SMTP_SECURE": "true",
@@ -68,9 +71,9 @@ Add the following configuration to your Cursor MCP settings:
     "mcp-mail-server": {
       "command": "mcp-mail-server",
       "env": {
-        "POP3_HOST": "your-pop3-server.com",
-        "POP3_PORT": "995",
-        "POP3_SECURE": "true",
+        "IMAP_HOST": "your-imap-server.com",
+        "IMAP_PORT": "993",
+        "IMAP_SECURE": "true",
         "SMTP_HOST": "your-smtp-server.com",
         "SMTP_PORT": "465", 
         "SMTP_SECURE": "true",
@@ -84,29 +87,57 @@ Add the following configuration to your Cursor MCP settings:
 
 ### 🛠️ Available Tools
 
-#### `connect_pop3`
-Connect to POP3 email server using preconfigured settings.
+#### `connect_imap`
+Connect to IMAP email server using preconfigured settings.
 
-#### `list_messages`
-List all messages in the mailbox with metadata.
+#### `open_mailbox`
+Open a specific mailbox (folder) for operations.
+
+**Parameters:**
+- `mailboxName` (string, optional): Name of the mailbox to open (default: "INBOX")
+- `readOnly` (boolean, optional): Open mailbox in read-only mode (default: false)
+
+#### `list_mailboxes`
+List all available mailboxes (folders) on the server.
+
+#### `search_messages`
+Search messages using IMAP search criteria.
+
+**Parameters:**
+- `criteria` (array, optional): IMAP search criteria (default: ["ALL"])
+  - Examples: `["UNSEEN"]`, `["SINCE", "2024-01-01"]`, `["FROM", "sender@example.com"]`
+
+#### `get_messages`
+Retrieve multiple messages by their UIDs.
+
+**Parameters:**
+- `uids` (array): Array of message UIDs to retrieve
+- `markSeen` (boolean, optional): Mark messages as seen when retrieving (default: false)
 
 #### `get_message`
-Retrieve complete content of a specific email.
+Retrieve complete content of a specific email by UID.
 
 **Parameters:**
-- `messageId` (number): Message ID to retrieve
+- `uid` (number): Message UID to retrieve
+- `markSeen` (boolean, optional): Mark message as seen when retrieving (default: false)
 
 #### `delete_message`
-Delete a specific email message.
+Delete a specific email message by UID.
 
 **Parameters:**
-- `messageId` (number): Message ID to delete
+- `uid` (number): Message UID to delete
 
 #### `get_message_count`
-Get the total number of messages in the mailbox.
+Get the total number of messages in current mailbox.
 
-#### `disconnect`
-Disconnect from the POP3 server.
+#### `get_unseen_messages`
+Get all unseen (unread) messages in current mailbox.
+
+#### `get_recent_messages`
+Get all recent messages in current mailbox.
+
+#### `disconnect_imap`
+Disconnect from the IMAP server.
 
 #### `connect_smtp`
 Connect to SMTP email server using preconfigured settings.
@@ -126,7 +157,7 @@ Send an email via SMTP.
 Disconnect from the SMTP server.
 
 #### `quick_connect`
-Connect to both POP3 and SMTP servers simultaneously using preconfigured settings.
+Connect to both IMAP and SMTP servers simultaneously using preconfigured settings.
 
 ### 💡 Usage Examples
 
@@ -147,24 +178,47 @@ Quick connect to mail
 
 #### 📥 Receiving Emails
 
-1. Connect to POP3 server (if not using quick connect):
+1. Connect to IMAP server (if not using quick connect):
 ```
-Connect to POP3 server
-```
-
-2. List emails:
-```
-Show me my email list
+Connect to IMAP server
 ```
 
-3. Get specific email:
+2. Open a mailbox:
 ```
-Show me the content of email ID 1
+Open INBOX mailbox
+```
+or
+```
+Open Sent mailbox in read-only mode
 ```
 
-4. Delete email:
+3. Search for emails:
 ```
-Delete email with ID 1
+Search for unseen messages
+```
+or
+```
+Search for messages from sender@example.com since 2024-01-01
+```
+
+4. Get specific email by UID:
+```
+Show me the content of email with UID 123
+```
+
+5. Get all unseen messages:
+```
+Show me all unread emails
+```
+
+6. List available mailboxes:
+```
+Show me all email folders
+```
+
+7. Delete email by UID:
+```
+Delete email with UID 123
 ```
 
 #### 📤 Sending Emails
@@ -192,9 +246,9 @@ Send HTML email to recipient@example.com with subject "Welcome" and HTML content
 
 | Variable | Description | Example Value |
 |----------|-------------|---------------|
-| `POP3_HOST` | POP3 server address | your-pop3-server.com |
-| `POP3_PORT` | POP3 port number | 995 |
-| `POP3_SECURE` | Enable TLS (true/false) | true |
+| `IMAP_HOST` | IMAP server address | your-imap-server.com |
+| `IMAP_PORT` | IMAP port number | 993 |
+| `IMAP_SECURE` | Enable TLS (true/false) | true |
 | `SMTP_HOST` | SMTP server address | your-smtp-server.com |
 | `SMTP_PORT` | SMTP port number | 465 |
 | `SMTP_SECURE` | Enable SSL (true/false) | true |
@@ -238,9 +292,9 @@ npm run build
 4. Local testing:
 ```bash
 # Set environment variables
-export POP3_HOST=your-pop3-server.com
-export POP3_PORT=995
-export POP3_SECURE=true
+export IMAP_HOST=your-imap-server.com
+export IMAP_PORT=993
+export IMAP_SECURE=true
 export SMTP_HOST=your-smtp-server.com
 export SMTP_PORT=465
 export SMTP_SECURE=true
