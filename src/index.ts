@@ -5,8 +5,8 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { POP3Client, POP3Config, EmailMessage } from './pop3-client.js';
-import { SMTPClient, SMTPConfig, EmailOptions, EmailResult } from './smtp-client.js';
+import { POP3Client, POP3Config } from './pop3-client.js';
+import { SMTPClient, SMTPConfig, EmailOptions } from './smtp-client.js';
 import { EMAIL_CONFIG } from './config.js';
 
 class MailMCPServer {
