@@ -19,7 +19,6 @@ export default {
     '@modelcontextprotocol/sdk/server/stdio.js', 
     '@modelcontextprotocol/sdk/types.js',
     'nodemailer',
-    // Node.js 内置模块
     'net',
     'tls',
     'events',
@@ -53,7 +52,7 @@ export default {
         passes: 2
       },
       mangle: {
-        reserved: ['POP3Client', 'SMTPClient', 'MailMCPServer'], // 保留主要类名
+        reserved: ['IMAPClient', 'SMTPClient', 'MailMCPServer'], // 保留主要类名
         properties: false
       },
       format: {
