@@ -1,5 +1,6 @@
 import Imap from 'imap';
 import { EventEmitter } from 'events';
+import { simpleParser, ParsedMail } from 'mailparser';
 
 export interface IMAPConfig {
   host: string;
@@ -16,15 +17,15 @@ export interface EmailMessage {
   uid: number;
   id?: number;
   flags: string[];
-  date: Date;
+  date: string; // 改为字符串格式，使用中国东八区时间
   size: number;
-  headers: Record<string, string>;
-  body: string;
-  raw: string;
-  subject?: string;
-  from?: string;
-  to?: string;
+  // 使用解析后的内容作为主要字段
+  subject: string;
+  from: string;
+  to: string;
   cc?: string;
+  bcc?: string;
+  text?: string;
 }
 
 export interface MailboxInfo {
@@ -193,6 +194,12 @@ export class IMAPClient extends EventEmitter {
 
     return new Promise((resolve, reject) => {
       const messages: EmailMessage[] = [];
+      const pendingMessages: Map<number, {
+        message: Partial<EmailMessage>;
+        headers: Record<string, string>;
+        body: string;
+        raw: string;
+      }> = new Map();
       
       if (uids.length === 0) {
         resolve(messages);
@@ -211,45 +218,54 @@ export class IMAPClient extends EventEmitter {
           uid: 0,
           id: seqno,
           flags: [],
-          date: new Date(),
+          date: '',
           size: 0
         };
 
         msg.on('body', (stream, info) => {
-          let buffer = '';
-          stream.on('data', (chunk) => {
-            buffer += chunk.toString();
+          const chunks: Buffer[] = [];
+          stream.on('data', (chunk: Buffer) => {
+            chunks.push(chunk);
           });
           
           stream.once('end', () => {
+            const buffer = Buffer.concat(chunks);
+            const bufferString = buffer.toString();
+            
             if (info.which === 'HEADER') {
-              headers = this.parseHeaders(buffer);
-              message.subject = headers['subject'] || '';
-              message.from = headers['from'] || '';
-              message.to = headers['to'] || '';
-              message.cc = headers['cc'] || '';
+              headers = this.parseHeaders(bufferString);
             } else if (info.which === 'TEXT') {
-              body = buffer;
+              body = bufferString;
             }
-            raw += buffer;
+            raw += bufferString;
           });
         });
 
         msg.once('attributes', (attrs) => {
           message.uid = attrs.uid;
           message.flags = attrs.flags || [];
-          message.date = attrs.date || new Date();
-          message.size = attrs.size || raw.length;
+          // 转换为中国东八区时间格式
+          const date = attrs.date || new Date();
+          message.date = date.toLocaleString('zh-CN', { 
+            timeZone: 'Asia/Shanghai',
+            year: 'numeric',
+            month: '2-digit', 
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          });
+          message.size = attrs.size || 0;
         });
 
         msg.once('end', () => {
-          console.error(`[IMAP] Message ${seqno} processed`);
-          messages.push({
-            ...message,
+          console.error(`[IMAP] Message ${seqno} processed, preparing for parse`);
+          pendingMessages.set(seqno, {
+            message,
             headers,
-            body: body.trim(),
+            body,
             raw
-          } as EmailMessage);
+          });
         });
       });
 
@@ -258,8 +274,76 @@ export class IMAPClient extends EventEmitter {
         reject(new Error(`Fetch failed: ${error.message}`));
       });
 
-      fetch.once('end', () => {
-        console.error(`[IMAP] Fetch completed, ${messages.length} messages processed`);
+      fetch.once('end', async () => {
+        console.error(`[IMAP] Fetch completed, parsing ${pendingMessages.size} messages`);
+        
+        // 解析所有待处理的消息
+        for (const [seqno, data] of pendingMessages) {
+          try {
+            // 使用 mailparser 解析完整的邮件
+            const parsedMail = await simpleParser(data.raw);
+            
+            // 提取纯邮箱地址的辅助函数
+            const extractEmailAddress = (addressObj: any): string => {
+              if (!addressObj) return '';
+              
+              // 处理数组情况
+              if (Array.isArray(addressObj)) {
+                return addressObj.map(addr => extractSingleEmail(addr)).filter(Boolean).join(', ');
+              }
+              
+              return extractSingleEmail(addressObj);
+            };
+            
+            // 从单个地址对象中提取邮箱地址
+            const extractSingleEmail = (addr: any): string => {
+              if (!addr) return '';
+              
+              // 如果是字符串，尝试从中提取邮箱
+              if (typeof addr === 'string') {
+                // 匹配 "name" <email@domain.com> 或 email@domain.com 格式
+                const emailMatch = addr.match(/<([^>]+)>/) || addr.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+                return emailMatch ? emailMatch[1] : addr;
+              }
+              
+              // 如果是对象，优先取 address 属性
+              if (addr && typeof addr === 'object') {
+                if (addr.address) return addr.address;
+                if (addr.text) {
+                  // 从 text 中提取邮箱
+                  const emailMatch = addr.text.match(/<([^>]+)>/) || addr.text.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+                  return emailMatch ? emailMatch[1] : addr.text;
+                }
+              }
+              
+              return '';
+            };
+            
+            messages.push({
+              ...data.message,
+              subject: parsedMail.subject || 'No Subject',
+              from: extractEmailAddress(parsedMail.from),
+              to: extractEmailAddress(parsedMail.to),
+              cc: extractEmailAddress(parsedMail.cc) || undefined,
+              bcc: extractEmailAddress(parsedMail.bcc) || undefined,
+              text: parsedMail.text
+            } as EmailMessage);
+          } catch (error) {
+            console.error(`[IMAP] Failed to parse message ${seqno}:`, error);
+            // 如果解析失败，返回基本信息和原始内容
+            messages.push({
+              ...data.message,
+              subject: data.headers['subject'] || 'Parse Failed',
+              from: data.headers['from'] || '',
+              to: data.headers['to'] || '',
+              cc: data.headers['cc'] || undefined,
+              bcc: data.headers['bcc'] || undefined,
+              text: data.body.trim()
+            } as EmailMessage);
+          }
+        }
+        
+        console.error(`[IMAP] All messages parsed, returning ${messages.length} messages`);
         resolve(messages);
       });
     });

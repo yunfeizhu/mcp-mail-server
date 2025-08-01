@@ -19,6 +19,8 @@ export default {
     '@modelcontextprotocol/sdk/server/stdio.js', 
     '@modelcontextprotocol/sdk/types.js',
     'nodemailer',
+    'mailparser',
+    'imap',
     'net',
     'tls',
     'events',

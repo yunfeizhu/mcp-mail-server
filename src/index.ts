@@ -13,6 +13,7 @@ class MailMCPServer {
   private server: Server;
   private imapClient: IMAPClient | null = null;
   private smtpClient: SMTPClient | null = null;
+  private isInitializing = false;
 
   constructor() {
     // 验证配置
@@ -52,16 +53,8 @@ class MailMCPServer {
       return {
         tools: [
           {
-            name: 'connect_imap',
-            description: 'Connect to IMAP email server (using preconfigured settings)',
-            inputSchema: {
-              type: 'object',
-              properties: {},
-            },
-          },
-          {
             name: 'open_mailbox',
-            description: 'Open a specific mailbox (folder)',
+            description: 'Open a specific mailbox (folder). Auto-connects if not already connected.',
             inputSchema: {
               type: 'object',
               properties: {
@@ -80,7 +73,7 @@ class MailMCPServer {
           },
           {
             name: 'list_mailboxes',
-            description: 'List all available mailboxes (folders)',
+            description: 'List all available mailboxes (folders). Auto-connects if not already connected.',
             inputSchema: {
               type: 'object',
               properties: {},
@@ -88,7 +81,7 @@ class MailMCPServer {
           },
           {
             name: 'search_messages',
-            description: 'Search messages using IMAP search criteria',
+            description: 'Search messages using IMAP search criteria. Auto-connects and opens INBOX if not already connected.',
             inputSchema: {
               type: 'object',
               properties: {
@@ -286,16 +279,8 @@ class MailMCPServer {
             },
           },
           {
-            name: 'connect_smtp',
-            description: 'Connect to SMTP email server for sending emails (using preconfigured settings)',
-            inputSchema: {
-              type: 'object',
-              properties: {},
-            },
-          },
-          {
             name: 'send_email',
-            description: 'Send an email via SMTP',
+            description: 'Send an email via SMTP. Auto-connects to SMTP server if not already connected.',
             inputSchema: {
               type: 'object',
               properties: {
@@ -328,16 +313,8 @@ class MailMCPServer {
             },
           },
           {
-            name: 'disconnect_smtp',
-            description: 'Disconnect from the SMTP server',
-            inputSchema: {
-              type: 'object',
-              properties: {},
-            },
-          },
-          {
-            name: 'quick_connect',
-            description: 'Connect to both IMAP and SMTP servers at once (using preconfigured settings)',
+            name: 'disconnect_all',
+            description: 'Disconnect from both IMAP and SMTP servers',
             inputSchema: {
               type: 'object',
               properties: {},
@@ -352,8 +329,6 @@ class MailMCPServer {
 
       try {
         switch (name) {
-          case 'connect_imap':
-            return await this.handleConnectIMAP();
           case 'open_mailbox':
             return await this.handleOpenMailbox(args);
           case 'list_mailboxes':
@@ -388,14 +363,10 @@ class MailMCPServer {
             return await this.handleGetRecentMessages();
           case 'disconnect_imap':
             return await this.handleDisconnectIMAP();
-          case 'connect_smtp':
-            return await this.handleConnectSMTP();
           case 'send_email':
             return await this.handleSendEmail(args);
-          case 'disconnect_smtp':
-            return await this.handleDisconnectSMTP();
-          case 'quick_connect':
-            return await this.handleQuickConnect();
+          case 'disconnect_all':
+            return await this.handleDisconnectAll();
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -410,6 +381,47 @@ class MailMCPServer {
         };
       }
     });
+  }
+
+  private async ensureIMAPConnection(): Promise<void> {
+    if (this.imapClient && this.imapClient.isConnected()) {
+      return;
+    }
+
+    if (this.isInitializing) {
+      // 等待当前的初始化完成
+      while (this.isInitializing) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      return;
+    }
+
+    this.isInitializing = true;
+    try {
+      const config: IMAPConfig = EMAIL_CONFIG.IMAP;
+      console.error(`[IMAP] Auto-connecting to ${config.host}:${config.port}`);
+      
+      this.imapClient = new IMAPClient(config);
+      await this.imapClient.connect();
+      
+      console.error('[IMAP] Auto-connection successful');
+    } finally {
+      this.isInitializing = false;
+    }
+  }
+
+  private async ensureSMTPConnection(): Promise<void> {
+    if (this.smtpClient) {
+      return;
+    }
+
+    const config: SMTPConfig = EMAIL_CONFIG.SMTP;
+    console.error(`[SMTP] Auto-connecting to ${config.host}:${config.port}`);
+    
+    this.smtpClient = new SMTPClient(config);
+    await this.smtpClient.connect();
+    
+    console.error('[SMTP] Auto-connection successful');
   }
 
   private async handleConnectIMAP() {
@@ -433,15 +445,13 @@ class MailMCPServer {
   }
 
   private async handleOpenMailbox(args: any) {
-    if (!this.imapClient) {
-      throw new Error('Not connected to IMAP server');
-    }
+    await this.ensureIMAPConnection();
 
     const mailboxName = args.mailboxName || 'INBOX';
     const readOnly = args.readOnly || false;
 
     try {
-      const mailboxInfo = await this.imapClient.openBox(mailboxName, readOnly);
+      const mailboxInfo = await this.imapClient!.openBox(mailboxName, readOnly);
       
       return {
         content: [
@@ -457,12 +467,10 @@ class MailMCPServer {
   }
 
   private async handleListMailboxes() {
-    if (!this.imapClient) {
-      throw new Error('Not connected to IMAP server');
-    }
+    await this.ensureIMAPConnection();
 
     try {
-      const boxes = await this.imapClient.getBoxes();
+      const boxes = await this.imapClient!.getBoxes();
       
       return {
         content: [
@@ -478,9 +486,7 @@ class MailMCPServer {
   }
 
   private async handleSearchMessages(args: any) {
-    if (!this.imapClient) {
-      throw new Error('Not connected to IMAP server');
-    }
+    await this.ensureIMAPConnection();
 
     // 如果没有提供criteria参数，或者criteria为空数组，使用['ALL']
     let criteria = args.criteria;
@@ -490,7 +496,7 @@ class MailMCPServer {
 
     try {
       console.error(`[IMAP] Searching with criteria:`, criteria);
-      const uids = await this.imapClient.search(criteria);
+      const uids = await this.imapClient!.search(criteria);
       
       const result = {
         searchCriteria: criteria,
@@ -515,9 +521,7 @@ class MailMCPServer {
   }
 
   private async handleSearchBySender(args: any) {
-    if (!this.imapClient) {
-      throw new Error('Not connected to IMAP server');
-    }
+    await this.ensureIMAPConnection();
 
     const sender = args.sender;
     if (!sender) {
@@ -528,7 +532,7 @@ class MailMCPServer {
       // 正确的node-imap FROM搜索语法
       const criteria = ['FROM', sender];
       console.error(`[IMAP] Searching messages from sender:`, sender);
-      const uids = await this.imapClient.search(criteria);
+      const uids = await this.imapClient!.search(criteria);
       
       const result = {
         searchType: 'By Sender',
@@ -552,9 +556,7 @@ class MailMCPServer {
   }
 
   private async handleSearchBySubject(args: any) {
-    if (!this.imapClient) {
-      throw new Error('Not connected to IMAP server');
-    }
+    await this.ensureIMAPConnection();
 
     const subject = args.subject;
     if (!subject) {
@@ -565,7 +567,7 @@ class MailMCPServer {
       // 根据文档，SUBJECT是直接的字符串搜索类型
       const criteria = ['SUBJECT', subject];
       console.error(`[IMAP] Searching messages with subject:`, subject);
-      const uids = await this.imapClient.search(criteria);
+      const uids = await this.imapClient!.search(criteria);
       
       const result = {
         searchType: 'By Subject',
@@ -589,9 +591,7 @@ class MailMCPServer {
   }
 
   private async handleSearchSinceDate(args: any) {
-    if (!this.imapClient) {
-      throw new Error('Not connected to IMAP server');
-    }
+    await this.ensureIMAPConnection();
 
     const date = args.date;
     if (!date) {
@@ -602,7 +602,7 @@ class MailMCPServer {
       // 正确的node-imap SINCE搜索语法
       const criteria = ['SINCE', date];
       console.error(`[IMAP] Searching messages since date:`, date);
-      const uids = await this.imapClient.search(criteria);
+      const uids = await this.imapClient!.search(criteria);
       
       const result = {
         searchType: 'Since Date',
@@ -627,9 +627,7 @@ class MailMCPServer {
   }
 
   private async handleSearchUnreadFromSender(args: any) {
-    if (!this.imapClient) {
-      throw new Error('Not connected to IMAP server');
-    }
+    await this.ensureIMAPConnection();
 
     const sender = args.sender;
     if (!sender) {
@@ -641,7 +639,7 @@ class MailMCPServer {
       // 所以这会搜索既是UNSEEN又是FROM sender的邮件
       const criteria = ['UNSEEN', ['FROM', sender]];
       console.error(`[IMAP] Searching unread messages from sender:`, sender);
-      const uids = await this.imapClient.search(criteria);
+      const uids = await this.imapClient!.search(criteria);
       
       const result = {
         searchType: 'Unread messages from specific sender',
@@ -666,9 +664,7 @@ class MailMCPServer {
   }
 
   private async handleSearchByBody(args: any) {
-    if (!this.imapClient) {
-      throw new Error('Not connected to IMAP server');
-    }
+    await this.ensureIMAPConnection();
 
     const text = args.text;
     if (!text) {
@@ -678,7 +674,7 @@ class MailMCPServer {
     try {
       const criteria = ['BODY', text];
       console.error(`[IMAP] Searching messages with body text:`, text);
-      const uids = await this.imapClient.search(criteria);
+      const uids = await this.imapClient!.search(criteria);
       
       const result = {
         searchType: 'By Body Text',
@@ -702,9 +698,7 @@ class MailMCPServer {
   }
 
   private async handleSearchLargerThan(args: any) {
-    if (!this.imapClient) {
-      throw new Error('Not connected to IMAP server');
-    }
+    await this.ensureIMAPConnection();
 
     const size = args.size;
     if (typeof size !== 'number') {
@@ -714,7 +708,7 @@ class MailMCPServer {
     try {
       const criteria = ['LARGER', size.toString()];
       console.error(`[IMAP] Searching messages larger than:`, size, 'bytes');
-      const uids = await this.imapClient.search(criteria);
+      const uids = await this.imapClient!.search(criteria);
       
       const result = {
         searchType: 'Larger Than Size',
@@ -738,9 +732,7 @@ class MailMCPServer {
   }
 
   private async handleSearchWithKeyword(args: any) {
-    if (!this.imapClient) {
-      throw new Error('Not connected to IMAP server');
-    }
+    await this.ensureIMAPConnection();
 
     const keyword = args.keyword;
     if (!keyword) {
@@ -750,7 +742,7 @@ class MailMCPServer {
     try {
       const criteria = ['KEYWORD', keyword];
       console.error(`[IMAP] Searching messages with keyword:`, keyword);
-      const uids = await this.imapClient.search(criteria);
+      const uids = await this.imapClient!.search(criteria);
       
       const result = {
         searchType: 'With Keyword',
@@ -774,9 +766,7 @@ class MailMCPServer {
   }
 
   private async handleGetMessages(args: any) {
-    if (!this.imapClient) {
-      throw new Error('Not connected to IMAP server');
-    }
+    await this.ensureIMAPConnection();
 
     const uids = args.uids;
     if (!Array.isArray(uids)) {
@@ -786,7 +776,7 @@ class MailMCPServer {
     const markSeen = args.markSeen || false;
 
     try {
-      const messages = await this.imapClient.fetchMessages(uids, { markSeen });
+      const messages = await this.imapClient!.fetchMessages(uids, { markSeen });
       
       return {
         content: [
@@ -802,9 +792,7 @@ class MailMCPServer {
   }
 
   private async handleGetMessage(args: any) {
-    if (!this.imapClient) {
-      throw new Error('Not connected to IMAP server');
-    }
+    await this.ensureIMAPConnection();
 
     const uid = args.uid;
     if (typeof uid !== 'number') {
@@ -814,7 +802,7 @@ class MailMCPServer {
     const markSeen = args.markSeen || false;
 
     try {
-      const message = await this.imapClient.getMessage(uid);
+      const message = await this.imapClient!.getMessage(uid);
       
       return {
         content: [
@@ -830,9 +818,7 @@ class MailMCPServer {
   }
 
   private async handleDeleteMessage(args: any) {
-    if (!this.imapClient) {
-      throw new Error('Not connected to IMAP server');
-    }
+    await this.ensureIMAPConnection();
 
     const uid = args.uid;
     if (typeof uid !== 'number') {
@@ -840,7 +826,7 @@ class MailMCPServer {
     }
 
     try {
-      await this.imapClient.deleteMessage(uid);
+      await this.imapClient!.deleteMessage(uid);
       
       return {
         content: [
@@ -856,12 +842,10 @@ class MailMCPServer {
   }
 
   private async handleGetMessageCount() {
-    if (!this.imapClient) {
-      throw new Error('Not connected to IMAP server');
-    }
+    await this.ensureIMAPConnection();
 
     try {
-      const count = await this.imapClient.getMessageCount();
+      const count = await this.imapClient!.getMessageCount();
       
       return {
         content: [
@@ -877,12 +861,10 @@ class MailMCPServer {
   }
 
   private async handleGetUnseenMessages() {
-    if (!this.imapClient) {
-      throw new Error('Not connected to IMAP server');
-    }
+    await this.ensureIMAPConnection();
 
     try {
-      const messages = await this.imapClient.getUnseenMessages();
+      const messages = await this.imapClient!.getUnseenMessages();
       
       return {
         content: [
@@ -898,12 +880,10 @@ class MailMCPServer {
   }
 
   private async handleGetRecentMessages() {
-    if (!this.imapClient) {
-      throw new Error('Not connected to IMAP server');
-    }
+    await this.ensureIMAPConnection();
 
     try {
-      const messages = await this.imapClient.getRecentMessages();
+      const messages = await this.imapClient!.getRecentMessages();
       
       return {
         content: [
@@ -920,7 +900,14 @@ class MailMCPServer {
 
   private async handleDisconnectIMAP() {
     if (!this.imapClient) {
-      throw new Error('Not connected to IMAP server');
+      return {
+        content: [
+          {
+            type: 'text',
+            text: 'IMAP client is not connected',
+          },
+        ],
+      };
     }
 
     try {
@@ -961,9 +948,7 @@ class MailMCPServer {
   }
 
   private async handleSendEmail(args: any) {
-    if (!this.smtpClient) {
-      throw new Error('Not connected to SMTP server');
-    }
+    await this.ensureSMTPConnection();
 
     const emailOptions: EmailOptions = {
       to: args.to.split(',').map((email: string) => email.trim()),
@@ -979,7 +964,7 @@ class MailMCPServer {
     }
 
     try {
-      const result = await this.smtpClient.sendMail(emailOptions);
+      const result = await this.smtpClient!.sendMail(emailOptions);
       
       return {
         content: [
@@ -994,54 +979,35 @@ class MailMCPServer {
     }
   }
 
-  private async handleDisconnectSMTP() {
-    if (!this.smtpClient) {
-      throw new Error('Not connected to SMTP server');
-    }
-
-    await this.smtpClient.disconnect();
-    this.smtpClient = null;
-    
-    return {
-      content: [
-        {
-          type: 'text',
-          text: 'Disconnected from SMTP server',
-        },
-      ],
-    };
-  }
-
-  private async handleQuickConnect() {
+  private async handleDisconnectAll() {
     const results = [];
-    let imapSuccess = false;
-    let smtpSuccess = false;
-
-    // 连接IMAP
-    try {
-      const imapConfig: IMAPConfig = EMAIL_CONFIG.IMAP;
-      this.imapClient = new IMAPClient(imapConfig);
-      await this.imapClient.connect();
-      results.push(`✅ IMAP: Successfully connected to ${imapConfig.host}:${imapConfig.port}`);
-      imapSuccess = true;
-    } catch (error) {
-      results.push(`❌ IMAP: Failed to connect - ${error instanceof Error ? error.message : String(error)}`);
+    
+    // 断开IMAP连接
+    if (this.imapClient) {
+      try {
+        await this.imapClient.disconnect();
+        this.imapClient = null;
+        results.push('✅ IMAP: Disconnected successfully');
+      } catch (error) {
+        results.push(`❌ IMAP: Disconnect failed - ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else {
+      results.push('ℹ️ IMAP: Not connected');
     }
-
-    // 连接SMTP
-    try {
-      const smtpConfig: SMTPConfig = EMAIL_CONFIG.SMTP;
-      this.smtpClient = new SMTPClient(smtpConfig);
-      await this.smtpClient.connect();
-      results.push(`✅ SMTP: Successfully connected to ${smtpConfig.host}:${smtpConfig.port}`);
-      smtpSuccess = true;
-    } catch (error) {
-      results.push(`❌ SMTP: Failed to connect - ${error instanceof Error ? error.message : String(error)}`);
+    
+    // 断开SMTP连接
+    if (this.smtpClient) {
+      try {
+        await this.smtpClient.disconnect();
+        this.smtpClient = null;
+        results.push('✅ SMTP: Disconnected successfully');
+      } catch (error) {
+        results.push(`❌ SMTP: Disconnect failed - ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else {
+      results.push('ℹ️ SMTP: Not connected');
     }
-
-    const summary = `Connection Summary: IMAP ${imapSuccess ? '✅' : '❌'} | SMTP ${smtpSuccess ? '✅' : '❌'}`;
-    results.push('', summary);
-
+    
     return {
       content: [
         {
@@ -1051,6 +1017,7 @@ class MailMCPServer {
       ],
     };
   }
+
 
   private validateConfig(): void {
     try {
