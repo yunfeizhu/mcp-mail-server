@@ -48,6 +48,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.5.0",
     "imap": "^0.8.19",
+    "mailparser": "^3.7.4",
     "nodemailer": "^6.9.0"
   },
   "devDependencies": {
@@ -56,6 +57,7 @@
     "@rollup/plugin-terser": "^0.4.0",
     "@rollup/plugin-typescript": "^11.0.0",
     "@types/imap": "^0.8.42",
+    "@types/mailparser": "^3.4.6",
     "@types/node": "^20.0.0",
     "@types/nodemailer": "^6.4.0",
     "rollup": "^4.0.0",
