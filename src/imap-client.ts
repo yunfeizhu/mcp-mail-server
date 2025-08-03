@@ -198,7 +198,7 @@ export class IMAPClient extends EventEmitter {
         message: Partial<EmailMessage>;
         headers: Record<string, string>;
         body: string;
-        raw: string;
+        rawBuffer: Buffer;
       }> = new Map();
       
       if (uids.length === 0) {
@@ -213,7 +213,7 @@ export class IMAPClient extends EventEmitter {
         
         let headers: Record<string, string> = {};
         let body = '';
-        let raw = '';
+        const rawChunks: Buffer[] = [];
         const message: Partial<EmailMessage> = {
           uid: 0,
           id: seqno,
@@ -226,18 +226,20 @@ export class IMAPClient extends EventEmitter {
           const chunks: Buffer[] = [];
           stream.on('data', (chunk: Buffer) => {
             chunks.push(chunk);
+            rawChunks.push(chunk); // 保存所有原始数据
           });
           
           stream.once('end', () => {
             const buffer = Buffer.concat(chunks);
-            const bufferString = buffer.toString();
             
             if (info.which === 'HEADER') {
+              // 头部需要字符串处理来解析
+              const bufferString = buffer.toString('utf8');
               headers = this.parseHeaders(bufferString);
             } else if (info.which === 'TEXT') {
-              body = bufferString;
+              // 正文暂时保留字符串版本（备用）
+              body = buffer.toString('utf8');
             }
-            raw += bufferString;
           });
         });
 
@@ -264,7 +266,7 @@ export class IMAPClient extends EventEmitter {
             message,
             headers,
             body,
-            raw
+            rawBuffer: Buffer.concat(rawChunks)
           });
         });
       });
@@ -280,8 +282,8 @@ export class IMAPClient extends EventEmitter {
         // 解析所有待处理的消息
         for (const [seqno, data] of pendingMessages) {
           try {
-            // 使用 mailparser 解析完整的邮件
-            const parsedMail = await simpleParser(data.raw);
+            // 使用 mailparser 解析完整的邮件原始Buffer，让mailparser自动处理编码
+            const parsedMail = await simpleParser(data.rawBuffer);
             
             // 提取纯邮箱地址的辅助函数
             const extractEmailAddress = (addressObj: any): string => {
@@ -355,23 +357,6 @@ export class IMAPClient extends EventEmitter {
       throw new Error(`Message with UID ${uid} not found`);
     }
     return messages[0];
-  }
-
-  async getMessagesBySeq(seqNumbers: number[]): Promise<EmailMessage[]> {
-    if (!this.imap) {
-      throw new Error('Not connected to IMAP server');
-    }
-
-    // 如果没有打开邮箱，自动打开收件箱
-    if (!this.currentBox) {
-      await this.openBox('INBOX', true);
-    }
-
-    // 对于序列号，我们需要先搜索获取对应的UID
-    const allUids = await this.search(['ALL']);
-    const targetUids = seqNumbers.map(seq => allUids[seq - 1]).filter(uid => uid !== undefined);
-    
-    return this.fetchMessages(targetUids);
   }
 
   async deleteMessage(uid: number): Promise<void> {
@@ -464,40 +449,61 @@ export class IMAPClient extends EventEmitter {
     return headers;
   }
 
-  async closeBox(): Promise<void> {
-    if (!this.imap || !this.currentBox) {
+  async disconnect(): Promise<void> {
+    if (!this.imap) {
+      return; // 已经没有连接对象
+    }
+
+    if (!this.connected) {
+      // 如果状态显示未连接，直接清理
+      this.imap = null;
+      this.authenticated = false;
+      this.currentBox = null;
       return;
     }
 
     return new Promise((resolve, reject) => {
-      this.imap!.closeBox((error) => {
-        if (error) {
-          console.error('[IMAP] Failed to close box:', error.message);
-          reject(new Error(`Failed to close mailbox: ${error.message}`));
-          return;
-        }
-        
-        console.error(`[IMAP] Closed box ${this.currentBox}`);
+      const timeout = setTimeout(() => {
+        console.error('[IMAP] Disconnect timeout, forcing cleanup');
+        this.connected = false;
+        this.authenticated = false;
         this.currentBox = null;
+        this.imap = null;
+        resolve();
+      }, 5000); // 5秒超时
+
+      this.imap!.once('end', () => {
+        clearTimeout(timeout);
+        console.error('[IMAP] Disconnected');
+        this.connected = false;
+        this.authenticated = false;
+        this.currentBox = null;
+        this.imap = null;
         resolve();
       });
-    });
-  }
 
-  async disconnect(): Promise<void> {
-    if (this.imap && this.connected) {
-      return new Promise((resolve) => {
-        this.imap!.once('end', () => {
-          console.error('[IMAP] Disconnected');
-          this.connected = false;
-          this.authenticated = false;
-          this.currentBox = null;
-          resolve();
-        });
-        
-        this.imap!.end();
+      this.imap!.once('error', (error: Error) => {
+        clearTimeout(timeout);
+        console.error('[IMAP] Disconnect error:', error.message);
+        this.connected = false;
+        this.authenticated = false;
+        this.currentBox = null;
+        this.imap = null;
+        resolve(); // 即使有错误也要resolve，因为目标是断开连接
       });
-    }
+      
+      try {
+        this.imap!.end();
+      } catch (error) {
+        clearTimeout(timeout);
+        console.error('[IMAP] Error calling end():', error);
+        this.connected = false;
+        this.authenticated = false;
+        this.currentBox = null;
+        this.imap = null;
+        resolve();
+      }
+    });
   }
 
   isConnected(): boolean {

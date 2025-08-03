@@ -9,14 +9,15 @@ A Model Context Protocol (MCP) server that enables email operations through IMAP
 #### 📥 IMAP Features (Receive Emails)
 - Connect to IMAP email servers with TLS support
 - Open and manage multiple mailboxes (folders)
-- Search messages using IMAP search criteria
-- Retrieve messages by UID with full content
+- Advanced email search with multiple criteria
+- Retrieve messages by UID with full content parsing via mailparser
 - Mark messages as seen/unseen
 - Delete messages from server
 - Get message counts and mailbox information
 - List all available mailboxes
 - Get unseen and recent messages
-- Secure connection management
+- Automatic connection management
+- Real-time connection status monitoring
 
 #### 📤 SMTP Features (Send Emails)  
 - Connect to SMTP email servers
@@ -87,8 +88,21 @@ Add the following configuration to your Cursor MCP settings:
 
 ### 🛠️ Available Tools
 
-#### `connect_imap`
-Connect to IMAP email server using preconfigured settings.
+#### Connection Management
+
+#### `connect_all`
+Connect to both IMAP and SMTP servers simultaneously using preconfigured settings.
+
+#### `get_connection_status`
+Check the current connection status of both IMAP and SMTP servers, including server information and current mailbox.
+
+#### `disconnect_imap`
+Disconnect from the IMAP server only.
+
+#### `disconnect_all`
+Disconnect from both IMAP and SMTP servers.
+
+#### Mailbox Operations
 
 #### `open_mailbox`
 Open a specific mailbox (folder) for operations.
@@ -100,12 +114,56 @@ Open a specific mailbox (folder) for operations.
 #### `list_mailboxes`
 List all available mailboxes (folders) on the server.
 
+#### Email Search Tools
+
 #### `search_messages`
 Search messages using IMAP search criteria.
 
 **Parameters:**
 - `criteria` (array, optional): IMAP search criteria (default: ["ALL"])
   - Examples: `["UNSEEN"]`, `["SINCE", "2024-01-01"]`, `["FROM", "sender@example.com"]`
+
+#### `search_by_sender`
+Search messages from a specific sender.
+
+**Parameters:**
+- `sender` (string): Email address of the sender to search for
+
+#### `search_by_subject`
+Search messages by subject keywords.
+
+**Parameters:**
+- `subject` (string): Keywords to search in email subject
+
+#### `search_by_body`
+Search messages containing specific text in the body.
+
+**Parameters:**
+- `text` (string): Text to search for in message body
+
+#### `search_since_date`
+Search messages since a specific date.
+
+**Parameters:**
+- `date` (string): Date in various formats like "April 20, 2010", "20-Apr-2010", or "2010-04-20"
+
+#### `search_larger_than`
+Search messages larger than specified size.
+
+**Parameters:**
+- `size` (number): Size in bytes
+
+#### `search_with_keyword`
+Search messages with specific keyword/flag.
+
+**Parameters:**
+- `keyword` (string): Keyword to search for
+
+#### `search_unread_from_sender`
+Search unread messages from a specific sender (demonstrates AND logic).
+
+**Parameters:**
+- `sender` (string): Email address of the sender
 
 #### `get_messages`
 Retrieve multiple messages by their UIDs.
@@ -136,11 +194,7 @@ Get all unseen (unread) messages in current mailbox.
 #### `get_recent_messages`
 Get all recent messages in current mailbox.
 
-#### `disconnect_imap`
-Disconnect from the IMAP server.
-
-#### `connect_smtp`
-Connect to SMTP email server using preconfigured settings.
+#### Email Sending
 
 #### `send_email`
 Send an email via SMTP.
@@ -153,11 +207,6 @@ Send an email via SMTP.
 - `cc` (string, optional): CC recipients, comma-separated
 - `bcc` (string, optional): BCC recipients, comma-separated
 
-#### `disconnect_smtp`
-Disconnect from the SMTP server.
-
-#### `quick_connect`
-Connect to both IMAP and SMTP servers simultaneously using preconfigured settings.
 
 ### 💡 Usage Examples
 
@@ -173,17 +222,23 @@ Connect to email servers
 ```
 or
 ```
-Quick connect to mail
+Connect to all mail servers
+```
+
+2. Check connection status:
+```
+Show email connection status
+```
+or
+```
+Check mail server connections
 ```
 
 #### 📥 Receiving Emails
 
-1. Connect to IMAP server (if not using quick connect):
-```
-Connect to IMAP server
-```
+**Note: IMAP connection is established automatically when needed**
 
-2. Open a mailbox:
+1. Open a mailbox:
 ```
 Open INBOX mailbox
 ```
@@ -192,50 +247,64 @@ or
 Open Sent mailbox in read-only mode
 ```
 
-3. Search for emails:
+2. Search for emails:
 ```
 Search for unseen messages
 ```
 or
 ```
-Search for messages from sender@example.com since 2024-01-01
+Search for messages from sender@example.com
+```
+or
+```
+Search for messages with "urgent" in the body
+```
+or
+```
+Search for messages larger than 1MB
+```
+or
+```
+Search for unread messages from boss@company.com
 ```
 
-4. Get specific email by UID:
+3. Get specific email by UID:
 ```
 Show me the content of email with UID 123
 ```
 
-5. Get all unseen messages:
+4. Get all unseen messages:
 ```
 Show me all unread emails
 ```
 
-6. List available mailboxes:
+5. List available mailboxes:
 ```
 Show me all email folders
 ```
 
-7. Delete email by UID:
+6. Delete email by UID:
 ```
 Delete email with UID 123
 ```
 
 #### 📤 Sending Emails
 
-1. Connect to SMTP server (if not using quick connect):
-```
-Connect to SMTP server
-```
+**Note: SMTP connection is established automatically when needed**
 
-2. Send simple email:
+1. Send simple email:
 ```
 Send email to recipient@example.com with subject "Test Email" and message "Hello, this is a test email"
 ```
 
-3. Send HTML email:
+2. Send HTML email:
 ```
 Send HTML email to recipient@example.com with subject "Welcome" and HTML content "<h1>Welcome!</h1><p>This is an HTML email</p>"
+```
+
+3. Send email with CC and BCC:
+```
+Send email to primary@example.com, CC to cc@example.com, BCC to bcc@example.com with subject "Team Update" and message "Weekly team update"
 ```
 
 ### 🔧 Environment Configuration

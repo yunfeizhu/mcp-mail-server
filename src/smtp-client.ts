@@ -91,8 +91,15 @@ export class SMTPClient {
 
   async disconnect(): Promise<void> {
     if (this.transporter) {
-      this.transporter.close();
-      this.transporter = null;
+      try {
+        this.transporter.close();
+        console.error('[SMTP] Disconnected successfully');
+      } catch (error) {
+        console.error('[SMTP] Error during disconnect:', error instanceof Error ? error.message : String(error));
+        // 即使关闭时出错，我们仍然要清理引用
+      } finally {
+        this.transporter = null;
+      }
     }
   }
 }
