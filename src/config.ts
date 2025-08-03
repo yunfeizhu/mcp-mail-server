@@ -1,6 +1,9 @@
-function getRequiredEnvVar(name: string): string {
+function getRequiredEnvVar(name: string, defaultValue?: string): string {
   const value = process.env[name];
   if (!value) {
+    if (defaultValue !== undefined) {
+      return defaultValue;
+    }
     throw new Error(`Missing required environment variable: ${name}. Please set this variable in your MCP server configuration.`);
   }
   return value;

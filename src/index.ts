@@ -337,14 +337,6 @@ class MailMCPServer {
             },
           },
           {
-            name: 'disconnect_imap',
-            description: 'Disconnect from the IMAP server. Only disconnects if currently connected.',
-            inputSchema: {
-              type: 'object',
-              properties: {},
-            },
-          },
-          {
             name: 'disconnect_all',
             description: 'Disconnect from both IMAP and SMTP servers. Only disconnects if currently connected.',
             inputSchema: {
@@ -395,8 +387,6 @@ class MailMCPServer {
             return await this.handleGetRecentMessages();
           case 'get_connection_status':
             return await this.handleGetConnectionStatus();
-          case 'disconnect_imap':
-            return await this.handleDisconnectIMAP();
           case 'send_email':
             return await this.handleSendEmail(args);
           case 'connect_all':
@@ -1054,34 +1044,6 @@ class MailMCPServer {
     };
   }
 
-  private async handleDisconnectIMAP() {
-    if (!this.imapClient) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: 'IMAP client is not connected',
-          },
-        ],
-      };
-    }
-
-    try {
-      await this.imapClient.disconnect();
-      this.imapClient = null;
-      
-      return {
-        content: [
-          {
-            type: 'text',
-            text: 'Disconnected from IMAP server',
-          },
-        ],
-      };
-    } catch (error) {
-      throw new Error(this.formatError(error, 'Failed to disconnect'));
-    }
-  }
 
   private async handleSendEmail(args: any) {
     await this.ensureRequiredConnections(false, true);
