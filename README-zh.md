@@ -96,9 +96,6 @@ npx mcp-mail-server
 ### `get_connection_status`
 检查IMAP和SMTP服务器的当前连接状态，包括服务器信息和当前邮箱。
 
-### `disconnect_imap`
-仅断开与IMAP服务器的连接。
-
 ### `disconnect_all`
 断开与IMAP和SMTP服务器的连接。
 

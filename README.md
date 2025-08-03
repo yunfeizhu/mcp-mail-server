@@ -96,9 +96,6 @@ Connect to both IMAP and SMTP servers simultaneously using preconfigured setting
 #### `get_connection_status`
 Check the current connection status of both IMAP and SMTP servers, including server information and current mailbox.
 
-#### `disconnect_imap`
-Disconnect from the IMAP server only.
-
 #### `disconnect_all`
 Disconnect from both IMAP and SMTP servers.
 
