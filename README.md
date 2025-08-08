@@ -1,49 +1,35 @@
 # MCP Mail Server
 
+[![npm version](https://badge.fury.io/js/mcp-mail-server.svg)](https://www.npmjs.com/package/mcp-mail-server)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 **Language:** English | [中文](README-zh.md)
 
-A Model Context Protocol (MCP) server that enables email operations through IMAP and SMTP protocols in Cursor AI. Features secure environment-based configuration for seamless email management.
+A Model Context Protocol server for IMAP/SMTP email operations with Claude, Cursor, and other AI assistants.
 
-### ✨ Features
+## Features
 
-#### 📥 IMAP Features (Receive Emails)
-- Connect to IMAP email servers with TLS support
-- Open and manage multiple mailboxes (folders)
-- Advanced email search with multiple criteria
-- Retrieve messages by UID with full content parsing via mailparser
-- Mark messages as seen/unseen
-- Delete messages from server
-- Get message counts and mailbox information
-- List all available mailboxes
-- Get unseen and recent messages
-- Automatic connection management
-- Real-time connection status monitoring
+- **IMAP Operations**: Search, read, and manage emails across mailboxes
+- **SMTP Support**: Send emails with HTML/text content and attachments  
+- **Secure Configuration**: Environment-based setup with TLS/SSL support
+- **AI-Friendly**: Natural language commands for email operations
+- **Auto Connection Management**: Automatic IMAP/SMTP connection handling
+- **Multi-Mailbox Support**: Access INBOX, Sent, and custom folders
 
-#### 📤 SMTP Features (Send Emails)  
-- Connect to SMTP email servers
-- Send emails (text and HTML formats)
-- Support for CC and BCC recipients
-- SSL/TLS encryption support
-- Comprehensive error handling
+## Quick Start
 
-### 📦 Installation
+1. **Install**: `npm install -g mcp-mail-server`
+2. **Configure** environment variables (see [Configuration](#configuration))
+3. **Add** to your MCP client configuration
+4. **Use** natural language: *"Show me unread emails from today"*
 
-#### Method 1: Install via npm
-```bash
-npm install -g mcp-mail-server
-```
+## Installation
 
-#### Method 2: Use with npx (Recommended)
-No installation required:
-```bash
-npx mcp-mail-server
-```
+<details>
+<summary>Claude Desktop</summary>
 
-### ⚙️ Cursor Configuration
+Add to your `claude_desktop_config.json`:
 
-Add the following configuration to your Cursor MCP settings:
-
-#### Using npx (Recommended):
 ```json
 {
   "mcpServers": {
@@ -65,18 +51,25 @@ Add the following configuration to your Cursor MCP settings:
 }
 ```
 
-#### Using global installation:
+</details>
+
+<details>
+<summary>Cursor</summary>
+
+Add to your Cursor MCP settings:
+
 ```json
 {
   "mcpServers": {
     "mcp-mail-server": {
-      "command": "mcp-mail-server",
+      "command": "npx",
+      "args": ["mcp-mail-server"],
       "env": {
         "IMAP_HOST": "your-imap-server.com",
         "IMAP_PORT": "993",
         "IMAP_SECURE": "true",
         "SMTP_HOST": "your-smtp-server.com",
-        "SMTP_PORT": "465", 
+        "SMTP_PORT": "465",
         "SMTP_SECURE": "true",
         "EMAIL_USER": "your-email@domain.com",
         "EMAIL_PASS": "your-password"
@@ -86,296 +79,216 @@ Add the following configuration to your Cursor MCP settings:
 }
 ```
 
-### 🛠️ Available Tools
+</details>
 
-#### Connection Management
+<details>
+<summary>Other MCP Clients</summary>
 
-#### `connect_all`
-Connect to both IMAP and SMTP servers simultaneously using preconfigured settings.
+For global installation:
 
-#### `get_connection_status`
-Check the current connection status of both IMAP and SMTP servers, including server information and current mailbox.
-
-#### `disconnect_all`
-Disconnect from both IMAP and SMTP servers.
-
-#### Mailbox Operations
-
-#### `open_mailbox`
-Open a specific mailbox (folder) for operations.
-
-**Parameters:**
-- `mailboxName` (string, optional): Name of the mailbox to open (default: "INBOX")
-- `readOnly` (boolean, optional): Open mailbox in read-only mode (default: false)
-
-#### `list_mailboxes`
-List all available mailboxes (folders) on the server.
-
-#### Email Search Tools
-
-#### `search_messages`
-Search messages using IMAP search criteria.
-
-**Parameters:**
-- `criteria` (array, optional): IMAP search criteria (default: ["ALL"])
-  - Examples: `["UNSEEN"]`, `["SINCE", "2024-01-01"]`, `["FROM", "sender@example.com"]`
-
-#### `search_by_sender`
-Search messages from a specific sender.
-
-**Parameters:**
-- `sender` (string): Email address of the sender to search for
-
-#### `search_by_subject`
-Search messages by subject keywords.
-
-**Parameters:**
-- `subject` (string): Keywords to search in email subject
-
-#### `search_by_body`
-Search messages containing specific text in the body.
-
-**Parameters:**
-- `text` (string): Text to search for in message body
-
-#### `search_since_date`
-Search messages since a specific date.
-
-**Parameters:**
-- `date` (string): Date in various formats like "April 20, 2010", "20-Apr-2010", or "2010-04-20"
-
-#### `search_larger_than`
-Search messages larger than specified size.
-
-**Parameters:**
-- `size` (number): Size in bytes
-
-#### `search_with_keyword`
-Search messages with specific keyword/flag.
-
-**Parameters:**
-- `keyword` (string): Keyword to search for
-
-#### `search_unread_from_sender`
-Search unread messages from a specific sender (demonstrates AND logic).
-
-**Parameters:**
-- `sender` (string): Email address of the sender
-
-#### `get_messages`
-Retrieve multiple messages by their UIDs.
-
-**Parameters:**
-- `uids` (array): Array of message UIDs to retrieve
-- `markSeen` (boolean, optional): Mark messages as seen when retrieving (default: false)
-
-#### `get_message`
-Retrieve complete content of a specific email by UID.
-
-**Parameters:**
-- `uid` (number): Message UID to retrieve
-- `markSeen` (boolean, optional): Mark message as seen when retrieving (default: false)
-
-#### `delete_message`
-Delete a specific email message by UID.
-
-**Parameters:**
-- `uid` (number): Message UID to delete
-
-#### `get_message_count`
-Get the total number of messages in current mailbox.
-
-#### `get_unseen_messages`
-Get all unseen (unread) messages in current mailbox.
-
-#### `get_recent_messages`
-Get all recent messages in current mailbox.
-
-#### Email Sending
-
-#### `send_email`
-Send an email via SMTP.
-
-**Parameters:**
-- `to` (string): Recipient email address(es), comma-separated
-- `subject` (string): Email subject
-- `text` (string, optional): Plain text email body
-- `html` (string, optional): HTML email body
-- `cc` (string, optional): CC recipients, comma-separated
-- `bcc` (string, optional): BCC recipients, comma-separated
-
-
-### 💡 Usage Examples
-
-**Note: This project uses preconfigured email server settings via environment variables.**
-
-In Cursor, you can use natural language commands:
-
-#### 🚀 Quick Start
-
-1. Connect to all email servers at once:
-```
-Connect to email servers
-```
-or
-```
-Connect to all mail servers
-```
-
-2. Check connection status:
-```
-Show email connection status
-```
-or
-```
-Check mail server connections
-```
-
-#### 📥 Receiving Emails
-
-**Note: IMAP connection is established automatically when needed**
-
-1. Open a mailbox:
-```
-Open INBOX mailbox
-```
-or
-```
-Open Sent mailbox in read-only mode
-```
-
-2. Search for emails:
-```
-Search for unseen messages
-```
-or
-```
-Search for messages from sender@example.com
-```
-or
-```
-Search for messages with "urgent" in the body
-```
-or
-```
-Search for messages larger than 1MB
-```
-or
-```
-Search for unread messages from boss@company.com
-```
-
-3. Get specific email by UID:
-```
-Show me the content of email with UID 123
-```
-
-4. Get all unseen messages:
-```
-Show me all unread emails
-```
-
-5. List available mailboxes:
-```
-Show me all email folders
-```
-
-6. Delete email by UID:
-```
-Delete email with UID 123
-```
-
-#### 📤 Sending Emails
-
-**Note: SMTP connection is established automatically when needed**
-
-1. Send simple email:
-```
-Send email to recipient@example.com with subject "Test Email" and message "Hello, this is a test email"
-```
-
-2. Send HTML email:
-```
-Send HTML email to recipient@example.com with subject "Welcome" and HTML content "<h1>Welcome!</h1><p>This is an HTML email</p>"
-```
-
-3. Send email with CC and BCC:
-```
-Send email to primary@example.com, CC to cc@example.com, BCC to bcc@example.com with subject "Team Update" and message "Weekly team update"
-```
-
-### 🔧 Environment Configuration
-
-#### Required Environment Variables
-
-**⚠️ All environment variables are required - no defaults provided!**
-
-| Variable | Description | Example Value |
-|----------|-------------|---------------|
-| `IMAP_HOST` | IMAP server address | your-imap-server.com |
-| `IMAP_PORT` | IMAP port number | 993 |
-| `IMAP_SECURE` | Enable TLS (true/false) | true |
-| `SMTP_HOST` | SMTP server address | your-smtp-server.com |
-| `SMTP_PORT` | SMTP port number | 465 |
-| `SMTP_SECURE` | Enable SSL (true/false) | true |
-| `EMAIL_USER` | Email username | your-email@domain.com |
-| `EMAIL_PASS` | Email password | your-password |
-
-#### Configuration Validation
-
-- Server will fail to start if any required environment variable is missing
-- Boolean values must be `true` or `false` (case-insensitive)
-- Port numbers must be valid integers
-- Configuration summary is displayed on startup (passwords are hidden)
-
-### ⚠️ Security Considerations
-
-- Use app-specific passwords when available (Gmail, Outlook, etc.)
-- Ensure secure network connections in production
-- Environment variables are the recommended configuration method
-- TLS/SSL encryption is strongly recommended for both protocols
-
-### 🔨 Development
-
-To modify or develop this project:
-
-1. Clone the repository:
 ```bash
-git clone https://github.com/yunfeizhu/mcp-mail-server.git
-cd mcp-mail-server
+npm install -g mcp-mail-server
 ```
 
-2. Install dependencies:
+Then configure with:
+
+```json
+{
+  "mcpServers": {
+    "mcp-mail-server": {
+      "command": "mcp-mail-server"
+    }
+  }
+}
+```
+
+</details>
+
+## Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `connect_all` | Connect to both IMAP and SMTP servers |
+| `get_connection_status` | Check connection status and server info |
+| `disconnect_all` | Disconnect from all servers |
+| `open_mailbox` | Open specific mailbox/folder |
+| `list_mailboxes` | List available mail folders |
+| `search_messages` | Search emails with IMAP criteria |
+| `search_by_sender` | Find emails from specific sender |
+| `search_by_subject` | Search by subject keywords |
+| `search_by_body` | Search message content |
+| `search_since_date` | Find emails since date |
+| `search_larger_than` | Find emails by size |
+| `get_message` | Retrieve email by UID |
+| `get_messages` | Retrieve multiple emails |
+| `delete_message` | Delete email by UID |
+| `get_unseen_messages` | Get all unread emails |
+| `get_recent_messages` | Get recent emails |
+| `send_email` | Send email via SMTP |
+
+<details>
+<summary>Detailed Tool Parameters</summary>
+
+### Connection Management
+- **connect_all**: No parameters required
+- **get_connection_status**: No parameters required  
+- **disconnect_all**: No parameters required
+
+### Mailbox Operations  
+- **open_mailbox**: `mailboxName` (string, default: "INBOX"), `readOnly` (boolean)
+- **list_mailboxes**: No parameters required
+
+### Search Operations
+- **search_messages**: `criteria` (array, IMAP search criteria)
+- **search_by_sender**: `sender` (string, email address)
+- **search_by_subject**: `subject` (string, keywords)
+- **search_by_body**: `text` (string, search text)
+- **search_since_date**: `date` (string, date format)
+- **search_larger_than**: `size` (number, bytes)
+
+### Message Operations
+- **get_message**: `uid` (number), `markSeen` (boolean, optional)
+- **get_messages**: `uids` (array), `markSeen` (boolean, optional)
+- **delete_message**: `uid` (number)
+
+### Email Sending
+- **send_email**: `to` (string), `subject` (string), `text` (string, optional), `html` (string, optional), `cc` (string, optional), `bcc` (string, optional)
+
+</details>
+
+
+## Usage Examples
+
+Use natural language commands with your AI assistant:
+
+### Basic Operations
+- *"Connect to my email servers"*
+- *"Show me all unread emails"*  
+- *"Search for emails from boss@company.com"*
+- *"Send an email to team@company.com about the meeting"*
+
+### Advanced Searches
+- *"Find emails with 'urgent' in the subject from last week"*
+- *"Show me large emails over 5MB"*
+- *"Get all emails from the Sales folder"*
+
+### Email Management  
+- *"Delete the email with UID 123"*
+- *"Mark recent emails as read"*
+- *"List all my email folders"*
+
+## Configuration
+
+### Environment Variables
+
+**⚠️ All variables are required**
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `IMAP_HOST` | IMAP server address | `imap.gmail.com` |
+| `IMAP_PORT` | IMAP port number | `993` |
+| `IMAP_SECURE` | Enable TLS | `true` |
+| `SMTP_HOST` | SMTP server address | `smtp.gmail.com` |
+| `SMTP_PORT` | SMTP port number | `465` |
+| `SMTP_SECURE` | Enable SSL | `true` |
+| `EMAIL_USER` | Email username | `your-email@gmail.com` |
+| `EMAIL_PASS` | Email password/app password | `your-app-password` |
+
+### Common Email Providers
+
+<details>
+<summary>Gmail Configuration</summary>
+
 ```bash
-npm install
+IMAP_HOST=imap.gmail.com
+IMAP_PORT=993
+IMAP_SECURE=true
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_SECURE=true
+EMAIL_USER=your-email@gmail.com
+EMAIL_PASS=your-app-password
 ```
 
-3. Build the project:
+**Note**: Use [App Passwords](https://support.google.com/accounts/answer/185833) instead of your regular password.
+
+</details>
+
+<details>
+<summary>Outlook/Hotmail Configuration</summary>
+
 ```bash
-npm run build
+IMAP_HOST=outlook.office365.com
+IMAP_PORT=993
+IMAP_SECURE=true
+SMTP_HOST=smtp.office365.com
+SMTP_PORT=587
+SMTP_SECURE=true
+EMAIL_USER=your-email@outlook.com
+EMAIL_PASS=your-password
 ```
 
-4. Local testing:
-```bash
-# Set environment variables
-export IMAP_HOST=your-imap-server.com
-export IMAP_PORT=993
-export IMAP_SECURE=true
-export SMTP_HOST=your-smtp-server.com
-export SMTP_PORT=465
-export SMTP_SECURE=true
-export EMAIL_USER=your-email@domain.com
-export EMAIL_PASS=your-password
+</details>
 
-# Run the server
-npm start
-```
+### Security Notes
 
-### 📊 Package Information
+- **Use App Passwords**: Enable 2FA and use app-specific passwords when available
+- **TLS/SSL Required**: Always use secure connections (IMAP_SECURE=true, SMTP_SECURE=true)
+- **Environment Variables**: Never hardcode credentials in configuration files
 
-- **Package Name**: `mcp-mail-server`
-- **Executable**: `mcp-mail-server`
-- **Node.js Version**: >=18.0.0
-- **License**: MIT
-- **Repository**: [GitHub](https://github.com/yunfeizhu/mcp-mail-server)
+## Development
+
+<details>
+<summary>Local Development Setup</summary>
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/yunfeizhu/mcp-mail-server.git
+   cd mcp-mail-server
+   ```
+
+2. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+
+3. **Build the project**:
+   ```bash
+   npm run build
+   ```
+
+4. **Set environment variables**:
+   ```bash
+   export IMAP_HOST=your-imap-server.com
+   export IMAP_PORT=993
+   export IMAP_SECURE=true
+   export SMTP_HOST=your-smtp-server.com
+   export SMTP_PORT=465
+   export SMTP_SECURE=true
+   export EMAIL_USER=your-email@domain.com
+   export EMAIL_PASS=your-password
+   ```
+
+5. **Run the server**:
+   ```bash
+   npm start
+   ```
+
+</details>
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+---
+
+**Package Information:**
+- Package: `mcp-mail-server`
+- Node.js: ≥18.0.0
+- Repository: [GitHub](https://github.com/yunfeizhu/mcp-mail-server)
+- Issues: [Report bugs](https://github.com/yunfeizhu/mcp-mail-server/issues)
 

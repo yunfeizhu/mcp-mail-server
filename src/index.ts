@@ -19,6 +19,138 @@ class MailMCPServer {
     return `${context}: ${error instanceof Error ? error.message : String(error)}`;
   }
 
+  // 按日期范围过滤邮件
+  private filterMessagesByDateRange(messages: any[], startDate?: string, endDate?: string): any[] {
+    if (!startDate && !endDate) {
+      return messages;
+    }
+    
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+    
+    return messages.filter(msg => {
+      if (!msg.date) return true; // 如果没有日期信息，保留邮件
+      
+      const msgDate = new Date(msg.date);
+      if (isNaN(msgDate.getTime())) return true; // 日期解析失败，保留邮件
+      
+      if (start && msgDate < start) return false;
+      if (end && msgDate > end) return false;
+      
+      return true;
+    });
+  }
+
+  // 在多个邮箱中搜索的辅助方法
+  private async searchInMultipleMailboxes(criteria: any[], searchType: string, searchValue: string, startDate: string = '', endDate: string = ''): Promise<any> {
+    const mailboxesToSearch = ['INBOX'];
+    
+    // 尝试添加发件箱
+    const sentBoxNames = ['INBOX.Sent', 'Sent', 'SENT', 'Sent Items', 'Sent Messages', '已发送'];
+    let sentBoxFound = false;
+    
+    for (const sentName of sentBoxNames) {
+      try {
+        await this.imapClient!.openBox(sentName, true);
+        mailboxesToSearch.push(sentName);
+        sentBoxFound = true;
+        break;
+      } catch (error) {
+        // 继续尝试下一个发件箱名称
+        continue;
+      }
+    }
+
+    const searchResults: any = {
+      searchType: searchType,
+      searchValue: searchValue,
+      searchCriteria: criteria,
+      mailboxesSearched: [],
+      totalMatches: 0,
+      messages: []
+    };
+
+    for (const mailboxName of mailboxesToSearch) {
+      try {
+        console.error(`[IMAP] Searching in mailbox: ${mailboxName}`);
+        await this.imapClient!.openBox(mailboxName, true);
+        
+        const uids = await this.imapClient!.search(criteria);
+        console.error(`[IMAP] Found ${uids.length} messages in ${mailboxName}`);
+
+        // 获取邮件内容
+        let filteredMessages: any[] = [];
+        let filteredUIDs: number[] = [];
+        
+        if (uids.length > 0) {
+          console.error(`[IMAP] Auto-fetching content for ${uids.length} messages from ${mailboxName}`);
+          const messages = await this.imapClient!.fetchMessages(uids);
+          
+          // 为每个邮件添加来源邮箱信息
+          let messagesWithMailbox = messages.map(msg => ({
+            ...msg,
+            sourceMailbox: mailboxName
+          }));
+          
+          // 按日期过滤
+          if (startDate || endDate) {
+            messagesWithMailbox = this.filterMessagesByDateRange(messagesWithMailbox, startDate, endDate);
+          }
+          
+          filteredMessages = messagesWithMailbox;
+          filteredUIDs = messagesWithMailbox.map(msg => msg.uid);
+          
+          searchResults.messages.push(...filteredMessages);
+        }
+        
+        // 使用过滤后的数据更新邮箱结果
+        const mailboxResult = {
+          mailbox: mailboxName,
+          matchingUIDs: filteredUIDs,
+          messageCount: filteredMessages.length
+        };
+        
+        searchResults.mailboxesSearched.push(mailboxResult);
+        
+      } catch (error) {
+        console.error(`[IMAP] Error searching in ${mailboxName}:`, error);
+        searchResults.mailboxesSearched.push({
+          mailbox: mailboxName,
+          error: `Failed to search: ${error instanceof Error ? error.message : String(error)}`,
+          matchingUIDs: [],
+          messageCount: 0
+        });
+      }
+    }
+
+    // 更新总计数为实际返回的消息数量（考虑日期过滤）
+    searchResults.totalMatches = searchResults.messages.length;
+    
+    // 按时间降序排序（最新的邮件在前）
+    searchResults.messages.sort((a: any, b: any) => {
+      const dateA = new Date(a.date || 0);
+      const dateB = new Date(b.date || 0);
+      return dateB.getTime() - dateA.getTime(); // 降序：新邮件在前
+    });
+    
+    // 生成搜索说明
+    if (searchResults.totalMatches > 0) {
+      let note = `Found and retrieved ${searchResults.totalMatches} messages across ${searchResults.mailboxesSearched.length} mailboxes`;
+      if (startDate || endDate) {
+        note += ` (filtered by date range)`;
+      }
+      searchResults.note = note;
+    } else {
+      searchResults.note = `No messages found in any of the searched mailboxes`;
+    }
+
+    if (!sentBoxFound) {
+      searchResults.warning = 'Could not find sent mailbox - only searched INBOX';
+    }
+
+    return searchResults;
+  }
+
   constructor() {
     // 验证配置
     this.validateConfig();
@@ -124,28 +256,22 @@ class MailMCPServer {
             },
           },
           {
-            name: 'search_messages',
-            description: 'Search messages using IMAP search criteria. Auto-connects and opens INBOX if not already connected.',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                criteria: {
-                  type: 'array',
-                  description: 'IMAP search criteria array. Examples: ["UNSEEN"], ["FROM", "user@example.com"], ["SUBJECT", "meeting"], ["BODY", "urgent"], ["SINCE", "April 20, 2010"], ["LARGER", "1000"], ["KEYWORD", "Important"], ["HEADER", "X-Custom", "value"], ["OR", "UNSEEN", ["SINCE", "April 20, 2010"]], ["!SEEN"] (negation). Default: searches ALL messages.',
-                  items: {}
-                }
-              },
-            },
-          },
-          {
             name: 'search_by_sender',
-            description: 'Search messages from a specific sender. Auto-connects if not already connected.',
+            description: 'Search messages from a specific sender with optional date range. Auto-connects if not already connected.',
             inputSchema: {
               type: 'object',
               properties: {
                 sender: {
                   type: 'string',
                   description: 'Email address of the sender to search for'
+                },
+                startDate: {
+                  type: 'string',
+                  description: 'Optional start date for filtering (format: "2025-07-01" or "01-Jul-2025"). Leave empty to not filter by start date.'
+                },
+                endDate: {
+                  type: 'string',
+                  description: 'Optional end date for filtering (format: "2025-08-01" or "01-Aug-2025"). Leave empty to not filter by end date.'
                 }
               },
               required: ['sender'],
@@ -153,27 +279,57 @@ class MailMCPServer {
           },
           {
             name: 'search_by_subject',
-            description: 'Search messages by subject keywords. Auto-connects if not already connected.',
+            description: 'Search messages by subject keywords with optional date range. Auto-connects if not already connected.',
             inputSchema: {
               type: 'object',
               properties: {
                 subject: {
                   type: 'string',
                   description: 'Keywords to search in email subject'
+                },
+                startDate: {
+                  type: 'string',
+                  description: 'Optional start date for filtering (format: "2025-07-01" or "01-Jul-2025"). Leave empty to not filter by start date.'
+                },
+                endDate: {
+                  type: 'string',
+                  description: 'Optional end date for filtering (format: "2025-08-01" or "01-Aug-2025"). Leave empty to not filter by end date.'
                 }
               },
               required: ['subject'],
             },
           },
           {
+            name: 'search_by_recipient',
+            description: 'Search messages sent to a specific recipient email address with optional date range. Auto-connects if not already connected.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                recipient: {
+                  type: 'string',
+                  description: 'Email address of the recipient to search for'
+                },
+                startDate: {
+                  type: 'string',
+                  description: 'Optional start date for filtering (format: "2025-07-01" or "01-Jul-2025"). Leave empty to not filter by start date.'
+                },
+                endDate: {
+                  type: 'string',
+                  description: 'Optional end date for filtering (format: "2025-08-01" or "01-Aug-2025"). Leave empty to not filter by end date.'
+                }
+              },
+              required: ['recipient'],
+            },
+          },
+          {
             name: 'search_since_date',
-            description: 'Search messages since a specific date. Auto-connects if not already connected.',
+            description: 'Search messages from a specific date until now (not for date ranges). Use search_messages for complex date ranges.',
             inputSchema: {
               type: 'object',
               properties: {
                 date: {
                   type: 'string',
-                  description: 'Date in various formats like "April 20, 2010", "20-Apr-2010", or "2010-04-20"'
+                  description: 'Start date to search from (searches from this date to present). Formats: "April 20, 2010", "20-Apr-2010", or "2010-04-20"'
                 }
               },
               required: ['date'],
@@ -181,13 +337,21 @@ class MailMCPServer {
           },
           {
             name: 'search_unread_from_sender',
-            description: 'Search unread messages from a specific sender (demonstrates AND logic). Auto-connects if not already connected.',
+            description: 'Search unread messages from a specific sender with optional date range (demonstrates AND logic). Auto-connects if not already connected.',
             inputSchema: {
               type: 'object',
               properties: {
                 sender: {
                   type: 'string',
                   description: 'Email address of the sender'
+                },
+                startDate: {
+                  type: 'string',
+                  description: 'Optional start date for filtering (format: "2025-07-01" or "01-Jul-2025"). Leave empty to not filter by start date.'
+                },
+                endDate: {
+                  type: 'string',
+                  description: 'Optional end date for filtering (format: "2025-08-01" or "01-Aug-2025"). Leave empty to not filter by end date.'
                 }
               },
               required: ['sender'],
@@ -195,41 +359,43 @@ class MailMCPServer {
           },
           {
             name: 'search_by_body',
-            description: 'Search messages containing specific text in the body. Auto-connects if not already connected.',
+            description: 'Search messages containing specific text in the body with optional date range. Auto-connects if not already connected.',
             inputSchema: {
               type: 'object',
               properties: {
                 text: {
                   type: 'string',
                   description: 'Text to search for in message body'
+                },
+                startDate: {
+                  type: 'string',
+                  description: 'Optional start date for filtering (format: "2025-07-01" or "01-Jul-2025"). Leave empty to not filter by start date.'
+                },
+                endDate: {
+                  type: 'string',
+                  description: 'Optional end date for filtering (format: "2025-08-01" or "01-Aug-2025"). Leave empty to not filter by end date.'
                 }
               },
               required: ['text'],
             },
           },
           {
-            name: 'search_larger_than',
-            description: 'Search messages larger than specified size. Auto-connects if not already connected.',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                size: {
-                  type: 'number',
-                  description: 'Size in bytes'
-                }
-              },
-              required: ['size'],
-            },
-          },
-          {
             name: 'search_with_keyword',
-            description: 'Search messages with specific keyword/flag. Auto-connects if not already connected.',
+            description: 'Search messages with specific keyword/flag with optional date range. Auto-connects if not already connected.',
             inputSchema: {
               type: 'object',
               properties: {
                 keyword: {
                   type: 'string',
                   description: 'Keyword to search for'
+                },
+                startDate: {
+                  type: 'string',
+                  description: 'Optional start date for filtering (format: "2025-07-01" or "01-Jul-2025"). Leave empty to not filter by start date.'
+                },
+                endDate: {
+                  type: 'string',
+                  description: 'Optional end date for filtering (format: "2025-08-01" or "01-Aug-2025"). Leave empty to not filter by end date.'
                 }
               },
               required: ['keyword'],
@@ -357,20 +523,18 @@ class MailMCPServer {
             return await this.handleOpenMailbox(args);
           case 'list_mailboxes':
             return await this.handleListMailboxes();
-          case 'search_messages':
-            return await this.handleSearchMessages(args);
           case 'search_by_sender':
             return await this.handleSearchBySender(args);
           case 'search_by_subject':
             return await this.handleSearchBySubject(args);
+          case 'search_by_recipient':
+            return await this.handleSearchByRecipient(args);
           case 'search_since_date':
             return await this.handleSearchSinceDate(args);
           case 'search_unread_from_sender':
             return await this.handleSearchUnreadFromSender(args);
           case 'search_by_body':
             return await this.handleSearchByBody(args);
-          case 'search_larger_than':
-            return await this.handleSearchLargerThan(args);
           case 'search_with_keyword':
             return await this.handleSearchWithKeyword(args);
           case 'get_messages':
@@ -571,45 +735,14 @@ class MailMCPServer {
     }
   }
 
-  private async handleSearchMessages(args: any) {
-    await this.ensureRequiredConnections(true, false);
-
-    // 如果没有提供criteria参数，或者criteria为空数组，使用['ALL']
-    let criteria = args.criteria;
-    if (!criteria || !Array.isArray(criteria) || criteria.length === 0) {
-      criteria = ['ALL'];
-    }
-
-    try {
-      console.error(`[IMAP] Searching with criteria:`, criteria);
-      const uids = await this.imapClient!.search(criteria);
-      
-      const result = {
-        searchCriteria: criteria,
-        matchingUIDs: uids,
-        totalMatches: uids.length,
-        note: criteria.length === 1 && criteria[0] === 'ALL' ? 
-          'Showing all messages. Use specific criteria like ["UNSEEN"] to filter results.' : 
-          'Search completed with specified criteria.'
-      };
-      
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
-    } catch (error) {
-      throw new Error(this.formatError(error, 'Search failed'));
-    }
-  }
 
   private async handleSearchBySender(args: any) {
     await this.ensureRequiredConnections(true, false);
 
     const sender = args.sender;
+    const startDate = args.startDate || '';
+    const endDate = args.endDate || '';
+    
     if (!sender) {
       throw new Error('sender parameter is required');
     }
@@ -617,16 +750,13 @@ class MailMCPServer {
     try {
       // 正确的node-imap FROM搜索语法
       const criteria = ['FROM', sender];
-      console.error(`[IMAP] Searching messages from sender:`, sender);
-      const uids = await this.imapClient!.search(criteria);
+      console.error(`[IMAP] Searching messages from sender across all mailboxes:`, sender);
       
-      const result = {
-        searchType: 'By Sender',
-        sender: sender,
-        searchCriteria: criteria,
-        matchingUIDs: uids,
-        totalMatches: uids.length
-      };
+      // 使用多邮箱搜索，带日期过滤
+      const result = await this.searchInMultipleMailboxes(criteria, 'By Sender', sender, startDate, endDate);
+      result.sender = sender; // 保持向后兼容
+      if (startDate) result.startDate = startDate;
+      if (endDate) result.endDate = endDate;
       
       return {
         content: [
@@ -645,6 +775,9 @@ class MailMCPServer {
     await this.ensureRequiredConnections(true, false);
 
     const subject = args.subject;
+    const startDate = args.startDate || '';
+    const endDate = args.endDate || '';
+    
     if (!subject) {
       throw new Error('subject parameter is required');
     }
@@ -652,16 +785,13 @@ class MailMCPServer {
     try {
       // 根据文档，SUBJECT是直接的字符串搜索类型
       const criteria = ['SUBJECT', subject];
-      console.error(`[IMAP] Searching messages with subject:`, subject);
-      const uids = await this.imapClient!.search(criteria);
+      console.error(`[IMAP] Searching messages with subject across all mailboxes:`, subject);
       
-      const result = {
-        searchType: 'By Subject',
-        subjectKeywords: subject,
-        searchCriteria: criteria,
-        matchingUIDs: uids,
-        totalMatches: uids.length
-      };
+      // 使用多邮箱搜索，带日期过滤
+      const result = await this.searchInMultipleMailboxes(criteria, 'By Subject', subject, startDate, endDate);
+      result.subjectKeywords = subject; // 保持向后兼容
+      if (startDate) result.startDate = startDate;
+      if (endDate) result.endDate = endDate;
       
       return {
         content: [
@@ -676,6 +806,41 @@ class MailMCPServer {
     }
   }
 
+  private async handleSearchByRecipient(args: any) {
+    await this.ensureRequiredConnections(true, false);
+
+    const recipient = args.recipient;
+    const startDate = args.startDate || '';
+    const endDate = args.endDate || '';
+    
+    if (!recipient) {
+      throw new Error('recipient parameter is required');
+    }
+
+    try {
+      // 使用IMAP TO搜索条件查找发送给指定收件人的邮件
+      const criteria = ['TO', recipient];
+      console.error(`[IMAP] Searching messages to recipient across all mailboxes:`, recipient);
+      
+      // 使用多邮箱搜索，带日期过滤
+      const result = await this.searchInMultipleMailboxes(criteria, 'By Recipient', recipient, startDate, endDate);
+      result.recipient = recipient; // 保持向后兼容
+      if (startDate) result.startDate = startDate;
+      if (endDate) result.endDate = endDate;
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(this.formatError(error, 'Search by recipient failed'));
+    }
+  }
+
   private async handleSearchSinceDate(args: any) {
     await this.ensureRequiredConnections(true, false);
 
@@ -687,17 +852,12 @@ class MailMCPServer {
     try {
       // 正确的node-imap SINCE搜索语法
       const criteria = ['SINCE', date];
-      console.error(`[IMAP] Searching messages since date:`, date);
-      const uids = await this.imapClient!.search(criteria);
+      console.error(`[IMAP] Searching messages since date across all mailboxes:`, date);
       
-      const result = {
-        searchType: 'Since Date',
-        sinceDate: date,
-        searchCriteria: criteria,
-        matchingUIDs: uids,
-        totalMatches: uids.length,
-        note: 'Date format should be like "April 20, 2010" or "20-Apr-2010"'
-      };
+      // 使用多邮箱搜索
+      const result = await this.searchInMultipleMailboxes(criteria, 'Since Date', date);
+      result.sinceDate = date; // 保持向后兼容
+      result.note = 'Date format should be like "April 20, 2010" or "20-Apr-2010". Searched across multiple mailboxes.';
       
       return {
         content: [
@@ -716,6 +876,9 @@ class MailMCPServer {
     await this.ensureRequiredConnections(true, false);
 
     const sender = args.sender;
+    const startDate = args.startDate || '';
+    const endDate = args.endDate || '';
+    
     if (!sender) {
       throw new Error('sender parameter is required');
     }
@@ -724,17 +887,14 @@ class MailMCPServer {
       // 根据文档，默认所有条件都是AND组合
       // 所以这会搜索既是UNSEEN又是FROM sender的邮件
       const criteria = ['UNSEEN', ['FROM', sender]];
-      console.error(`[IMAP] Searching unread messages from sender:`, sender);
-      const uids = await this.imapClient!.search(criteria);
+      console.error(`[IMAP] Searching unread messages from sender across all mailboxes:`, sender);
       
-      const result = {
-        searchType: 'Unread messages from specific sender',
-        sender: sender,
-        searchCriteria: criteria,
-        matchingUIDs: uids,
-        totalMatches: uids.length,
-        note: 'By default, all criteria are ANDed together - finds messages that are BOTH unread AND from the specified sender'
-      };
+      // 使用多邮箱搜索，带日期过滤
+      const result = await this.searchInMultipleMailboxes(criteria, 'Unread messages from specific sender', sender, startDate, endDate);
+      result.sender = sender; // 保持向后兼容
+      if (startDate) result.startDate = startDate;
+      if (endDate) result.endDate = endDate;
+      result.note = 'By default, all criteria are ANDed together - finds messages that are BOTH unread AND from the specified sender. Searched across multiple mailboxes.';
       
       return {
         content: [
@@ -753,22 +913,22 @@ class MailMCPServer {
     await this.ensureRequiredConnections(true, false);
 
     const text = args.text;
+    const startDate = args.startDate || '';
+    const endDate = args.endDate || '';
+    
     if (!text) {
       throw new Error('text parameter is required');
     }
 
     try {
       const criteria = ['BODY', text];
-      console.error(`[IMAP] Searching messages with body text:`, text);
-      const uids = await this.imapClient!.search(criteria);
+      console.error(`[IMAP] Searching messages with body text across all mailboxes:`, text);
       
-      const result = {
-        searchType: 'By Body Text',
-        bodyText: text,
-        searchCriteria: criteria,
-        matchingUIDs: uids,
-        totalMatches: uids.length
-      };
+      // 使用多邮箱搜索，带日期过滤
+      const result = await this.searchInMultipleMailboxes(criteria, 'By Body Text', text, startDate, endDate);
+      result.bodyText = text; // 保持向后兼容
+      if (startDate) result.startDate = startDate;
+      if (endDate) result.endDate = endDate;
       
       return {
         content: [
@@ -783,60 +943,26 @@ class MailMCPServer {
     }
   }
 
-  private async handleSearchLargerThan(args: any) {
-    await this.ensureRequiredConnections(true, false);
-
-    const size = args.size;
-    if (typeof size !== 'number') {
-      throw new Error('size parameter must be a number');
-    }
-
-    try {
-      const criteria = ['LARGER', size.toString()];
-      console.error(`[IMAP] Searching messages larger than:`, size, 'bytes');
-      const uids = await this.imapClient!.search(criteria);
-      
-      const result = {
-        searchType: 'Larger Than Size',
-        minimumSize: size,
-        searchCriteria: criteria,
-        matchingUIDs: uids,
-        totalMatches: uids.length
-      };
-      
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
-    } catch (error) {
-      throw new Error(this.formatError(error, 'Search larger than failed'));
-    }
-  }
-
   private async handleSearchWithKeyword(args: any) {
     await this.ensureRequiredConnections(true, false);
 
     const keyword = args.keyword;
+    const startDate = args.startDate || '';
+    const endDate = args.endDate || '';
+    
     if (!keyword) {
       throw new Error('keyword parameter is required');
     }
 
     try {
       const criteria = ['KEYWORD', keyword];
-      console.error(`[IMAP] Searching messages with keyword:`, keyword);
-      const uids = await this.imapClient!.search(criteria);
+      console.error(`[IMAP] Searching messages with keyword across all mailboxes:`, keyword);
       
-      const result = {
-        searchType: 'With Keyword',
-        keyword: keyword,
-        searchCriteria: criteria,
-        matchingUIDs: uids,
-        totalMatches: uids.length
-      };
+      // 使用多邮箱搜索，带日期过滤
+      const result = await this.searchInMultipleMailboxes(criteria, 'With Keyword', keyword, startDate, endDate);
+      result.keyword = keyword; // 保持向后兼容
+      if (startDate) result.startDate = startDate;
+      if (endDate) result.endDate = endDate;
       
       return {
         content: [
@@ -884,8 +1010,6 @@ class MailMCPServer {
     if (typeof uid !== 'number') {
       throw new Error('uid must be a number');
     }
-
-    const markSeen = args.markSeen || false;
 
     try {
       const message = await this.imapClient!.getMessage(uid);

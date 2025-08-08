@@ -1,49 +1,35 @@
 # MCP Mail Server
 
+[![npm version](https://badge.fury.io/js/mcp-mail-server.svg)](https://www.npmjs.com/package/mcp-mail-server)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 **语言:** [English](README.md) | 中文
 
-一个支持IMAP和SMTP协议的MCP服务器，可以在Cursor中使用来收发邮件。通过环境变量进行安全配置。
+一个支持IMAP/SMTP协议的模型上下文协议服务器，适用于Claude、Cursor等AI助手的邮件操作。
 
-## ✨ 功能特性
+## 功能特性
 
-### 📥 IMAP功能（接收邮件）
-- 连接到IMAP邮件服务器，支持TLS
-- 打开和管理多个邮箱（文件夹）
-- 多条件高级邮件搜索功能
-- 通过UID获取完整邮件内容，集成mailparser解析
-- 标记邮件为已读/未读
-- 从服务器删除邮件
-- 获取邮件数量和邮箱信息
-- 列出所有可用邮箱
-- 获取未读和最新邮件
-- 自动连接管理
-- 实时连接状态监控
+- **IMAP操作**: 跨邮箱搜索、阅读和管理邮件
+- **SMTP支持**: 发送HTML/文本邮件和附件
+- **安全配置**: 基于环境变量的TLS/SSL设置
+- **AI友好**: 支持自然语言邮件操作命令
+- **自动连接管理**: 自动处理IMAP/SMTP连接
+- **多邮箱支持**: 访问收件箱、已发送和自定义文件夹
 
-### 📤 SMTP功能（发送邮件）  
-- 连接到SMTP邮件服务器
-- 发送邮件（支持文本和HTML格式）
-- 支持抄送（CC）和密送（BCC）
-- SSL/TLS加密支持
-- 完善的错误处理
+## 快速开始
 
-## 📦 安装方式
+1. **安装**: `npm install -g mcp-mail-server`
+2. **配置** 环境变量（参见[配置](#配置)）
+3. **添加** 到MCP客户端配置
+4. **使用** 自然语言: *"显示今天的未读邮件"*
 
-### 方式1：通过npm全局安装
-```bash
-npm install -g mcp-mail-server
-```
+## 安装
 
-### 方式2：使用npx（推荐）
-无需安装，直接使用：
-```bash
-npx mcp-mail-server
-```
+<details>
+<summary>Claude Desktop</summary>
 
-## ⚙️ Cursor配置
+添加到你的 `claude_desktop_config.json`:
 
-在Cursor的MCP配置文件中添加以下配置：
-
-### 使用npx方式（推荐）：
 ```json
 {
   "mcpServers": {
@@ -65,18 +51,25 @@ npx mcp-mail-server
 }
 ```
 
-### 使用全局安装方式：
+</details>
+
+<details>
+<summary>Cursor</summary>
+
+添加到Cursor的MCP设置:
+
 ```json
 {
   "mcpServers": {
     "mcp-mail-server": {
-      "command": "mcp-mail-server",
+      "command": "npx",
+      "args": ["mcp-mail-server"],
       "env": {
         "IMAP_HOST": "your-imap-server.com",
         "IMAP_PORT": "993",
         "IMAP_SECURE": "true",
         "SMTP_HOST": "your-smtp-server.com",
-        "SMTP_PORT": "465", 
+        "SMTP_PORT": "465",
         "SMTP_SECURE": "true",
         "EMAIL_USER": "your-email@domain.com",
         "EMAIL_PASS": "your-password"
@@ -86,295 +79,215 @@ npx mcp-mail-server
 }
 ```
 
-## 🛠️ 可用工具
+</details>
+
+<details>
+<summary>其他MCP客户端</summary>
+
+全局安装方式:
+
+```bash
+npm install -g mcp-mail-server
+```
+
+然后配置:
+
+```json
+{
+  "mcpServers": {
+    "mcp-mail-server": {
+      "command": "mcp-mail-server"
+    }
+  }
+}
+```
+
+</details>
+
+## 可用工具
+
+| 工具 | 描述 |
+|------|------|
+| `connect_all` | 连接IMAP和SMTP服务器 |
+| `get_connection_status` | 检查连接状态和服务器信息 |
+| `disconnect_all` | 断开所有服务器连接 |
+| `open_mailbox` | 打开指定邮箱/文件夹 |
+| `list_mailboxes` | 列出可用邮件文件夹 |
+| `search_messages` | 使用IMAP条件搜索邮件 |
+| `search_by_sender` | 按发件人搜索邮件 |
+| `search_by_subject` | 按主题关键词搜索 |
+| `search_by_body` | 搜索邮件内容 |
+| `search_since_date` | 按日期搜索邮件 |
+| `search_larger_than` | 按大小搜索邮件 |
+| `get_message` | 通过UID获取邮件 |
+| `get_messages` | 获取多个邮件 |
+| `delete_message` | 通过UID删除邮件 |
+| `get_unseen_messages` | 获取所有未读邮件 |
+| `get_recent_messages` | 获取最近邮件 |
+| `send_email` | 通过SMTP发送邮件 |
+
+<details>
+<summary>详细工具参数</summary>
 
 ### 连接管理
+- **connect_all**: 无需参数
+- **get_connection_status**: 无需参数  
+- **disconnect_all**: 无需参数
 
-### `connect_all`
-使用预配置设置同时连接到IMAP和SMTP服务器。
+### 邮箱操作  
+- **open_mailbox**: `mailboxName` (字符串, 默认: "INBOX"), `readOnly` (布尔值)
+- **list_mailboxes**: 无需参数
 
-### `get_connection_status`
-检查IMAP和SMTP服务器的当前连接状态，包括服务器信息和当前邮箱。
+### 搜索操作
+- **search_messages**: `criteria` (数组, IMAP搜索条件)
+- **search_by_sender**: `sender` (字符串, 邮箱地址)
+- **search_by_subject**: `subject` (字符串, 关键词)
+- **search_by_body**: `text` (字符串, 搜索文本)
+- **search_since_date**: `date` (字符串, 日期格式)
+- **search_larger_than**: `size` (数字, 字节数)
 
-### `disconnect_all`
-断开与IMAP和SMTP服务器的连接。
-
-### 邮箱操作
-
-### `open_mailbox`
-打开指定邮箱（文件夹）进行操作。
-
-**参数：**
-- `mailboxName` (string, 可选): 要打开的邮箱名称（默认："INBOX"）
-- `readOnly` (boolean, 可选): 以只读模式打开邮箱（默认：false）
-
-### `list_mailboxes`
-列出服务器上所有可用的邮箱（文件夹）。
-
-### 邮件搜索工具
-
-### `search_messages`
-使用IMAP搜索条件搜索邮件。
-
-**参数：**
-- `criteria` (array, 可选): IMAP搜索条件数组（默认：搜索所有邮件）
-  - 示例：`["UNSEEN"]`, `["FROM", "sender@example.com"]`, `["SUBJECT", "meeting"]`
-
-### `search_by_sender`
-搜索来自特定发件人的邮件。
-
-**参数：**
-- `sender` (string): 发件人邮箱地址
-
-### `search_by_subject`
-按主题关键词搜索邮件。
-
-**参数：**
-- `subject` (string): 要在主题中搜索的关键词
-
-### `search_by_body`
-搜索正文中包含特定文本的邮件。
-
-**参数：**
-- `text` (string): 要在邮件正文中搜索的文本
-
-### `search_since_date`
-搜索指定日期以来的邮件。
-
-**参数：**
-- `date` (string): 日期，支持多种格式如"April 20, 2010"、"20-Apr-2010"等
-
-### `search_larger_than`
-搜索大于指定大小的邮件。
-
-**参数：**
-- `size` (number): 大小（字节）
-
-### `search_with_keyword`
-搜索具有特定关键词/标签的邮件。
-
-**参数：**
-- `keyword` (string): 要搜索的关键词
-
-### `search_unread_from_sender`
-搜索来自特定发件人的未读邮件（演示AND逻辑）。
-
-**参数：**
-- `sender` (string): 发件人邮箱地址
-
-### `get_messages`
-通过UID获取多个邮件。
-
-**参数：**
-- `uids` (array): 要获取的邮件UID数组
-- `markSeen` (boolean, 可选): 获取时是否标记为已读（默认：false）
-
-### `get_message`
-通过UID获取特定邮件的完整内容。
-
-**参数：**
-- `uid` (number): 要获取的邮件UID
-- `markSeen` (boolean, 可选): 获取时是否标记为已读（默认：false）
-
-### `delete_message`
-通过UID删除特定邮件。
-
-**参数：**
-- `uid` (number): 要删除的邮件UID
-
-### `get_message_count`
-获取当前邮箱中邮件的总数。
-
-### `get_unseen_messages`
-获取当前邮箱中所有未读邮件。
-
-### `get_recent_messages`
-获取当前邮箱中所有最新邮件。
+### 邮件操作
+- **get_message**: `uid` (数字), `markSeen` (布尔值, 可选)
+- **get_messages**: `uids` (数组), `markSeen` (布尔值, 可选)
+- **delete_message**: `uid` (数字)
 
 ### 邮件发送
+- **send_email**: `to` (字符串), `subject` (字符串), `text` (字符串, 可选), `html` (字符串, 可选), `cc` (字符串, 可选), `bcc` (字符串, 可选)
 
-### `send_email`
-通过SMTP发送邮件。
-
-**参数：**
-- `to` (string): 收件人邮箱地址，多个地址用逗号分隔
-- `subject` (string): 邮件主题
-- `text` (string, 可选): 纯文本邮件内容
-- `html` (string, 可选): HTML格式邮件内容
-- `cc` (string, 可选): 抄送地址，用逗号分隔
-- `bcc` (string, 可选): 密送地址，用逗号分隔
+</details>
 
 
-## 💡 使用示例
+## 使用示例
 
-**注意：本项目通过环境变量使用预配置的邮件服务器设置。**
+与AI助手使用自然语言命令：
 
-在Cursor中，你可以使用自然语言命令：
+### 基本操作
+- *"连接我的邮件服务器"*
+- *"显示所有未读邮件"*  
+- *"搜索来自boss@company.com的邮件"*
+- *"发送邮件给team@company.com关于会议"*
 
-### 🚀 快速开始
+### 高级搜索
+- *"查找上周主题包含'紧急'的邮件"*
+- *"显示大于5MB的邮件"*
+- *"获取销售文件夹中的所有邮件"*
 
-1. 一键连接所有邮件服务器：
-```
-连接邮件服务器
-```
-或者
-```
-连接所有邮件服务器
-```
+### 邮件管理  
+- *"删除UID为123的邮件"*
+- *"标记最近的邮件为已读"*
+- *"列出我的所有邮件文件夹"*
 
-2. 检查连接状态：
-```
-显示邮件连接状态
-```
-或者
-```
-检查邮件服务器连接
-```
+## 配置
 
-### 📥 接收邮件示例
+### 环境变量
 
-**注意：IMAP连接会在需要时自动建立**
+**⚠️ 所有变量都是必需的**
 
-1. 打开邮箱：
-```
-打开INBOX邮箱
-```
-或者
-```
-以只读模式打开已发送邮箱
-```
+| 变量 | 描述 | 示例 |
+|------|------|------|
+| `IMAP_HOST` | IMAP服务器地址 | `imap.gmail.com` |
+| `IMAP_PORT` | IMAP端口号 | `993` |
+| `IMAP_SECURE` | 启用TLS | `true` |
+| `SMTP_HOST` | SMTP服务器地址 | `smtp.gmail.com` |
+| `SMTP_PORT` | SMTP端口号 | `465` |
+| `SMTP_SECURE` | 启用SSL | `true` |
+| `EMAIL_USER` | 邮箱用户名 | `your-email@gmail.com` |
+| `EMAIL_PASS` | 邮箱密码/应用密码 | `your-app-password` |
 
-2. 搜索邮件：
-```
-搜索未读邮件
-```
-或者
-```
-搜索来自 sender@example.com 的邮件
-```
-或者
-```
-搜索正文包含"紧急"的邮件
-```
-或者
-```
-搜索大于1MB的邮件
-```
-或者
-```
-搜索来自 boss@company.com 的未读邮件
-```
+### 常用邮件提供商
 
-3. 获取特定邮件：
-```
-显示UID为123的邮件内容
-```
+<details>
+<summary>Gmail配置</summary>
 
-4. 获取所有未读邮件：
-```
-显示所有未读邮件
-```
-
-5. 列出可用邮箱：
-```
-显示所有邮件文件夹
-```
-
-6. 删除邮件：
-```
-删除UID为123的邮件
-```
-
-### 📤 发送邮件示例
-
-**注意：SMTP连接会在需要时自动建立**
-
-1. 发送简单邮件：
-```
-发送邮件给 recipient@example.com，主题是"测试邮件"，内容是"你好，这是一封测试邮件"
-```
-
-2. 发送HTML邮件：
-```
-发送HTML邮件给 recipient@example.com，主题是"欢迎"，HTML内容是"<h1>欢迎！</h1><p>这是一封HTML邮件</p>"
-```
-
-3. 发送带有抄送和密送的邮件：
-```
-发送邮件给 primary@example.com，抄送给 cc@example.com，密送给 bcc@example.com，主题是"团队更新"，内容是"周度团队更新"
-```
-
-## 🔧 环境变量配置
-
-### 必需的环境变量
-
-**⚠️ 所有环境变量都是必需的，没有默认值！**
-
-| 变量名 | 描述 | 示例值 |
-|--------|------|--------|
-| `IMAP_HOST` | IMAP服务器地址 | your-imap-server.com |
-| `IMAP_PORT` | IMAP端口号 | 993 |
-| `IMAP_SECURE` | 启用TLS (true/false) | true |
-| `SMTP_HOST` | SMTP服务器地址 | your-smtp-server.com |
-| `SMTP_PORT` | SMTP端口号 | 465 |
-| `SMTP_SECURE` | 启用SSL (true/false) | true |
-| `EMAIL_USER` | 邮箱用户名 | your-email@domain.com |
-| `EMAIL_PASS` | 邮箱密码 | your-password |
-
-### 配置验证
-
-- 如果缺少任何必需的环境变量，服务器将启动失败
-- 布尔值必须是 `true` 或 `false`（不区分大小写）
-- 端口号必须是有效的整数
-- 启动时会显示配置摘要（密码被隐藏）
-
-## ⚠️ 安全注意事项
-
-- 可用时使用应用专用密码（Gmail、Outlook等）
-- 确保生产环境中的网络连接安全
-- 推荐使用环境变量配置方法
-- 强烈建议为两个协议启用TLS/SSL加密
-
-## 🔨 本地开发
-
-如果你想修改或开发这个项目：
-
-1. 克隆仓库：
 ```bash
-git clone https://github.com/yunfeizhu/mcp-mail-server.git
-cd mcp-mail-server
+IMAP_HOST=imap.gmail.com
+IMAP_PORT=993
+IMAP_SECURE=true
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_SECURE=true
+EMAIL_USER=your-email@gmail.com
+EMAIL_PASS=your-app-password
 ```
 
-2. 安装依赖：
+**注意**: 使用[应用专用密码](https://support.google.com/accounts/answer/185833)而不是常规密码。
+
+</details>
+
+<details>
+<summary>Outlook/Hotmail配置</summary>
+
 ```bash
-npm install
+IMAP_HOST=outlook.office365.com
+IMAP_PORT=993
+IMAP_SECURE=true
+SMTP_HOST=smtp.office365.com
+SMTP_PORT=587
+SMTP_SECURE=true
+EMAIL_USER=your-email@outlook.com
+EMAIL_PASS=your-password
 ```
 
-3. 构建项目：
-```bash
-npm run build
-```
+</details>
 
-4. 本地测试：
-```bash
-# 设置环境变量
-export IMAP_HOST=your-imap-server.com
-export IMAP_PORT=993
-export IMAP_SECURE=true
-export SMTP_HOST=your-smtp-server.com
-export SMTP_PORT=465
-export SMTP_SECURE=true
-export EMAIL_USER=your-email@domain.com
-export EMAIL_PASS=your-password
+### 安全说明
 
-# 运行服务器
-npm start
-```
+- **使用应用密码**: 启用2FA并在可用时使用应用专用密码
+- **需要TLS/SSL**: 始终使用安全连接 (IMAP_SECURE=true, SMTP_SECURE=true)
+- **环境变量**: 绝不在配置文件中硬编码凭据
 
-## 📊 发布信息
+## 开发
 
-- **包名**: `mcp-mail-server`
-- **可执行文件**: `mcp-mail-server`
-- **Node.js版本**: >=18.0.0
-- **许可证**: MIT
-- **仓库**: [GitHub](https://github.com/yunfeizhu/mcp-mail-server)
+<details>
+<summary>本地开发设置</summary>
+
+1. **克隆仓库**:
+   ```bash
+   git clone https://github.com/yunfeizhu/mcp-mail-server.git
+   cd mcp-mail-server
+   ```
+
+2. **安装依赖**:
+   ```bash
+   npm install
+   ```
+
+3. **构建项目**:
+   ```bash
+   npm run build
+   ```
+
+4. **设置环境变量**:
+   ```bash
+   export IMAP_HOST=your-imap-server.com
+   export IMAP_PORT=993
+   export IMAP_SECURE=true
+   export SMTP_HOST=your-smtp-server.com
+   export SMTP_PORT=465
+   export SMTP_SECURE=true
+   export EMAIL_USER=your-email@domain.com
+   export EMAIL_PASS=your-password
+   ```
+
+5. **运行服务器**:
+   ```bash
+   npm start
+   ```
+
+</details>
+
+## 贡献
+
+欢迎贡献！请随时提交Pull Request。
+
+## 许可证
+
+MIT许可证 - 详见[LICENSE](LICENSE)文件。
+
+---
+
+**包信息：**
+- 包名: `mcp-mail-server`
+- Node.js: ≥18.0.0
+- 仓库: [GitHub](https://github.com/yunfeizhu/mcp-mail-server)
+- 问题: [报告Bug](https://github.com/yunfeizhu/mcp-mail-server/issues)
