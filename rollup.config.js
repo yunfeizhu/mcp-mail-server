@@ -2,7 +2,6 @@ import typescript from '@rollup/plugin-typescript';
 import resolve from '@rollup/plugin-node-resolve';
 import commonjs from '@rollup/plugin-commonjs';
 import terser from '@rollup/plugin-terser';
-// 移除未使用的 preserveShebang 插件导入
 
 export default {
   input: 'src/index.ts',
@@ -61,6 +60,5 @@ export default {
         comments: false
       }
     }),
-    // 移除 shebang，MCP服务器不需要
   ]
 };
