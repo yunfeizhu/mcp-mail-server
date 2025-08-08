@@ -1,6 +1,6 @@
 # MCP Mail Server
 
-[![npm version](https://badge.fury.io/js/mcp-mail-server.svg)](https://www.npmjs.com/package/mcp-mail-server)
+![NPM Version](https://img.shields.io/npm/v/mcp-mail-server)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **语言:** [English](README.md) | 中文
