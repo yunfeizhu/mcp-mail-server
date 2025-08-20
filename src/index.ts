@@ -1431,10 +1431,7 @@ class MailMCPServer {
       }
 
       // 构建主题（添加Re:前缀）
-      let subject = originalMessage.subject || '';
-      if (!subject.toLowerCase().startsWith('re:')) {
-        subject = `Re: ${subject}`;
-      }
+      const subject = `Re: ${originalMessage.subject || ''}`;
 
       // 构建回复内容
       let finalText = replyText;
