@@ -192,7 +192,7 @@ class MailMCPServer {
         break;
       } catch (error) {
         // 继续尝试下一个发件箱名称
-        continue;
+        console.error(`[IMAP] Failed to open sent mailbox ${sentName}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
@@ -642,7 +642,7 @@ class MailMCPServer {
                   default: true
                 },
               },
-              required: ['originalUid', 'text'],
+              required: ['originalUid'],
             },
           },
           // === 邮件管理 ===
@@ -828,7 +828,7 @@ class MailMCPServer {
               break;
             } catch (sentError) {
               // 继续尝试下一个发件箱名称
-              continue;
+              console.error(`[IMAP] Failed to open sent mailbox ${sentName}: ${sentError instanceof Error ? sentError.message : String(sentError)}`);
             }
           }
           
@@ -1603,7 +1603,17 @@ class MailMCPServer {
     // 连接IMAP
     try {
       if (this.imapClient && this.imapClient.isConnected()) {
-        results.push('ℹ️ IMAP: Already connected');
+        // 检查当前连接的用户是否与配置的用户一致
+        const currentUser = this.imapClient.getCurrentUsername();
+        const configUser = EMAIL_CONFIG.IMAP.username;
+        if (currentUser !== configUser) {
+          console.error(`[IMAP] User mismatch: current=${currentUser}, config=${configUser}, reconnecting...`);
+          await this.imapClient.disconnect();
+          await this.ensureIMAPConnection();
+          results.push('✅ IMAP: Reconnected with correct user');
+        } else {
+          results.push('ℹ️ IMAP: Already connected');
+        }
       } else {
         await this.ensureIMAPConnection();
         results.push('✅ IMAP: Connected successfully');
@@ -1614,8 +1624,18 @@ class MailMCPServer {
     
     // 连接SMTP
     try {
-      if (this.smtpClient) {
-        results.push('ℹ️ SMTP: Already connected');
+      if (this.smtpClient && this.smtpClient.isConnected()) {
+        // 检查当前连接的用户是否与配置的用户一致
+        const currentUser = this.smtpClient.getCurrentUsername();
+        const configUser = EMAIL_CONFIG.SMTP.username;
+        if (currentUser !== configUser) {
+          console.error(`[SMTP] User mismatch: current=${currentUser}, config=${configUser}, reconnecting...`);
+          await this.smtpClient.disconnect();
+          await this.ensureSMTPConnection();
+          results.push('✅ SMTP: Reconnected with correct user');
+        } else {
+          results.push('ℹ️ SMTP: Already connected');
+        }
       } else {
         await this.ensureSMTPConnection();
         results.push('✅ SMTP: Connected successfully');

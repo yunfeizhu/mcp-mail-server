@@ -89,6 +89,14 @@ export class SMTPClient {
     }
   }
 
+  getCurrentUsername(): string | null {
+    return this.config?.username || null;
+  }
+
+  isConnected(): boolean {
+    return this.transporter !== null;
+  }
+
   async disconnect(): Promise<void> {
     if (this.transporter) {
       try {
