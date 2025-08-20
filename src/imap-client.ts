@@ -1,6 +1,6 @@
 import Imap from 'imap';
 import { EventEmitter } from 'events';
-import { simpleParser, ParsedMail } from 'mailparser';
+import { simpleParser } from 'mailparser';
 
 export interface IMAPConfig {
   host: string;
@@ -26,6 +26,7 @@ export interface EmailMessage {
   cc?: string;
   bcc?: string;
   text?: string;
+  html?: string;
 }
 
 export interface MailboxInfo {
@@ -328,7 +329,8 @@ export class IMAPClient extends EventEmitter {
               to: extractEmailAddress(parsedMail.to),
               cc: extractEmailAddress(parsedMail.cc) || undefined,
               bcc: extractEmailAddress(parsedMail.bcc) || undefined,
-              text: parsedMail.text
+              text: parsedMail.text,
+              html: parsedMail.html
             } as EmailMessage);
           } catch (error) {
             console.error(`[IMAP] Failed to parse message ${seqno}:`, error);
@@ -462,7 +464,7 @@ export class IMAPClient extends EventEmitter {
       return;
     }
 
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const timeout = setTimeout(() => {
         console.error('[IMAP] Disconnect timeout, forcing cleanup');
         this.connected = false;
@@ -512,5 +514,71 @@ export class IMAPClient extends EventEmitter {
 
   getCurrentBox(): string | null {
     return this.currentBox;
+  }
+
+  // 保存邮件到指定文件夹（用于已发送邮件）
+  async saveMessageToFolder(messageContent: string, folderName: string = 'INBOX.Sent'): Promise<void> {
+    if (!this.connected) {
+      throw new Error('IMAP client is not connected');
+    }
+
+    return new Promise((resolve, reject) => {
+      // 尝试打开目标文件夹
+      this.imap!.openBox(folderName, false, (err) => {
+        if (err) {
+          // 如果文件夹不存在，尝试创建
+          console.warn(`[IMAP] Folder ${folderName} not found, trying to create it`);
+          this.imap!.addBox(folderName, (createErr) => {
+            if (createErr) {
+              console.error(`[IMAP] Failed to create folder ${folderName}:`, createErr.message);
+              // 如果创建失败，尝试其他常见的发件箱名称
+              this.trySaveToAlternateSentFolders(messageContent, resolve, reject);
+              return;
+            }
+            // 创建成功后再次尝试打开并保存
+            this.saveToOpenedFolder(messageContent, folderName, resolve, reject);
+          });
+        } else {
+          // 文件夹存在，直接保存
+          this.saveToOpenedFolder(messageContent, folderName, resolve, reject);
+        }
+      });
+    });
+  }
+
+  private saveToOpenedFolder(messageContent: string, folderName: string, resolve: () => void, reject: (error: Error) => void): void {
+    this.imap!.append(messageContent, { mailbox: folderName }, (err) => {
+      if (err) {
+        console.error(`[IMAP] Failed to save message to ${folderName}:`, err.message);
+        reject(new Error(`Failed to save message to ${folderName}: ${err.message}`));
+      } else {
+        console.log(`[IMAP] Message successfully saved to ${folderName}`);
+        resolve();
+      }
+    });
+  }
+
+  private trySaveToAlternateSentFolders(messageContent: string, resolve: () => void, reject: (error: Error) => void): void {
+    const alternateFolders = ['Sent', 'SENT', 'Sent Items', 'Sent Messages', '已发送'];
+    let currentIndex = 0;
+
+    const tryNext = () => {
+      if (currentIndex >= alternateFolders.length) {
+        console.warn('[IMAP] All sent folder attempts failed, message not saved to sent folder');
+        resolve(); // 不抛出错误，因为邮件已经发送成功
+        return;
+      }
+
+      const folderName = alternateFolders[currentIndex++];
+      this.imap!.openBox(folderName, false, (err) => {
+        if (err) {
+          tryNext(); // 尝试下一个文件夹
+        } else {
+          this.saveToOpenedFolder(messageContent, folderName, resolve, reject);
+        }
+      });
+    };
+
+    tryNext();
   }
 }

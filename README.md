@@ -125,6 +125,7 @@ Then configure with:
 | `get_unseen_messages` | Get all unread emails |
 | `get_recent_messages` | Get recent emails |
 | `send_email` | Send email via SMTP |
+| `reply_to_email` | Reply to specific email |
 
 <details>
 <summary>Detailed Tool Parameters</summary>
@@ -153,6 +154,7 @@ Then configure with:
 
 ### Email Sending
 - **send_email**: `to` (string), `subject` (string), `text` (string, optional), `html` (string, optional), `cc` (string, optional), `bcc` (string, optional)
+- **reply_to_email**: `originalUid` (number), `text` (string), `html` (string, optional), `replyToAll` (boolean, optional), `includeOriginal` (boolean, optional)
 
 </details>
 
@@ -166,6 +168,7 @@ Use natural language commands with your AI assistant:
 - *"Show me all unread emails"*  
 - *"Search for emails from boss@company.com"*
 - *"Send an email to team@company.com about the meeting"*
+- *"Reply to email with UID 123"*
 
 ### Advanced Searches
 - *"Find emails with 'urgent' in the subject from last week"*
