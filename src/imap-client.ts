@@ -516,6 +516,10 @@ export class IMAPClient extends EventEmitter {
     return this.currentBox;
   }
 
+  getCurrentUsername(): string | null {
+    return this.config?.username || null;
+  }
+
   // 保存邮件到指定文件夹（用于已发送邮件）
   async saveMessageToFolder(messageContent: string, folderName: string = 'INBOX.Sent'): Promise<void> {
     if (!this.connected) {
