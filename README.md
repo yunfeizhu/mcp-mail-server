@@ -118,6 +118,7 @@ Then configure with:
 | `search_by_subject` | Search by subject keywords |
 | `search_by_body` | Search message content |
 | `search_since_date` | Find emails since date |
+| `search_unreplied_from_sender` | Find unreplied emails from specific sender |
 | `search_larger_than` | Find emails by size |
 | `get_message` | Retrieve email by UID |
 | `get_messages` | Retrieve multiple emails |
@@ -145,6 +146,7 @@ Then configure with:
 - **search_by_subject**: `subject` (string, keywords)
 - **search_by_body**: `text` (string, search text)
 - **search_since_date**: `date` (string, date format)
+- **search_unreplied_from_sender**: `sender` (string, email address), `startDate` (string, optional), `endDate` (string, optional)
 - **search_larger_than**: `size` (number, bytes)
 
 ### Message Operations
@@ -172,6 +174,7 @@ Use natural language commands with your AI assistant:
 
 ### Advanced Searches
 - *"Find emails with 'urgent' in the subject from last week"*
+- *"Show me unreplied emails from boss@company.com"*
 - *"Show me large emails over 5MB"*
 - *"Get all emails from the Sales folder"*
 

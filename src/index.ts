@@ -493,6 +493,28 @@ class MailMCPServer {
             },
           },
           {
+            name: 'search_unreplied_from_sender',
+            description: 'Search unreplied messages from a specific sender with optional date range. Identifies messages that have not been replied to by checking for corresponding reply messages. Auto-connects if not already connected.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                sender: {
+                  type: 'string',
+                  description: 'Email address of the sender to search for unreplied messages'
+                },
+                startDate: {
+                  type: 'string',
+                  description: 'Optional start date/time for filtering. Supports multiple formats: "2025-07-01", "2025-07-01 14:30:00", "01-Jul-2025", or ISO format. Leave empty to not filter by start date.'
+                },
+                endDate: {
+                  type: 'string',
+                  description: 'Optional end date/time for filtering. Supports multiple formats: "2025-08-01", "2025-08-01 23:59:59", "01-Aug-2025", or ISO format. Leave empty to not filter by end date.'
+                }
+              },
+              required: ['sender'],
+            },
+          },
+          {
             name: 'search_by_body',
             description: 'Search messages containing specific text in the body with optional date range. Auto-connects if not already connected.',
             inputSchema: {
@@ -700,6 +722,8 @@ class MailMCPServer {
             return await this.handleSearchSinceDate(args);
           case 'search_unread_from_sender':
             return await this.handleSearchUnreadFromSender(args);
+          case 'search_unreplied_from_sender':
+            return await this.handleSearchUnrepliedFromSender(args);
           case 'search_by_body':
             return await this.handleSearchByBody(args);
           case 'search_with_keyword':
@@ -1075,6 +1099,93 @@ class MailMCPServer {
       };
     } catch (error) {
       throw new Error(this.formatError(error, 'Search unread from sender failed'));
+    }
+  }
+
+  private async handleSearchUnrepliedFromSender(args: any) {
+    await this.ensureRequiredConnections(true, false);
+
+    const sender = args.sender;
+    const startDate = args.startDate || '';
+    const endDate = args.endDate || '';
+    
+    if (!sender) {
+      throw new Error('sender parameter is required');
+    }
+
+    try {
+      console.error(`[IMAP] Searching unreplied messages from sender: ${sender}`);
+      
+      // 1. 获取来自发件人的邮件（收到的邮件）
+      const fromSenderResult = await this.searchInMultipleMailboxes(
+        ['FROM', sender], 
+        'From Sender', 
+        sender, 
+        startDate, 
+        endDate
+      );
+      
+      // 2. 获取发给该发件人的邮件（已发送的邮件）
+      const toSenderResult = await this.searchInMultipleMailboxes(
+        ['TO', sender], 
+        'To Sender', 
+        sender, 
+        startDate, 
+        endDate
+      );
+      
+      console.error(`[IMAP] Found ${fromSenderResult.messages.length} messages from sender, ${toSenderResult.messages.length} messages to sender`);
+      
+      // 3. 提取已回复的主题（从发给发件人的邮件中）
+      const repliedSubjects = new Set<string>();
+      toSenderResult.messages.forEach(msg => {
+        const cleanSubject = this.cleanReplySubject(msg.subject || '');
+        if (cleanSubject) {
+          repliedSubjects.add(cleanSubject.toLowerCase()); // 不区分大小写匹配
+        }
+      });
+      
+      console.error(`[IMAP] Found ${repliedSubjects.size} unique replied subjects`);
+      
+      // 4. 过滤出未回复的邮件
+      const unrepliedMessages = fromSenderResult.messages.filter(msg => {
+        const cleanSubject = this.cleanReplySubject(msg.subject || '');
+        if (!cleanSubject) return true; // 如果主题为空，认为未回复
+        return !repliedSubjects.has(cleanSubject.toLowerCase());
+      });
+      
+      console.error(`[IMAP] Found ${unrepliedMessages.length} unreplied messages`);
+      
+      // 5. 构建结果
+      const result: SearchResult = {
+        searchType: 'Unreplied messages from sender',
+        searchValue: sender,
+        searchCriteria: ['FROM', sender],
+        mailboxesSearched: fromSenderResult.mailboxesSearched,
+        totalMatches: unrepliedMessages.length,
+        messages: unrepliedMessages,
+        sender: sender, // 保持向后兼容
+        note: `Found ${unrepliedMessages.length} unreplied messages from ${sender}. Checked against ${repliedSubjects.size} replied subjects.`
+      };
+      
+      if (startDate) result.startDate = startDate;
+      if (endDate) result.endDate = endDate;
+      
+      // 如果有过滤条件，添加说明
+      if (startDate || endDate) {
+        result.note += ' (filtered by date range)';
+      }
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(this.formatError(error, 'Search unreplied from sender failed'));
     }
   }
 
@@ -1535,6 +1646,13 @@ class MailMCPServer {
 
     const extracted = this.extractEmailFromAddress(addressField);
     return extracted ? [extracted] : [];
+  }
+
+  // 辅助方法：清理主题中的Re:前缀，用于匹配回复关系
+  private cleanReplySubject(subject: string): string {
+    if (!subject) return '';
+    // 移除各种形式的回复前缀（Re:, RE:, 回复:等）和多个空格
+    return subject.replace(/^(re:|RE:|回复:|答复:)\s*/i, '').trim();
   }
 
   // 辅助方法：构建文本格式的引用内容

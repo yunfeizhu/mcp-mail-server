@@ -118,6 +118,7 @@ npm install -g mcp-mail-server
 | `search_by_subject` | 按主题关键词搜索 |
 | `search_by_body` | 搜索邮件内容 |
 | `search_since_date` | 按日期搜索邮件 |
+| `search_unreplied_from_sender` | 按发件人搜索未回复邮件 |
 | `search_larger_than` | 按大小搜索邮件 |
 | `get_message` | 通过UID获取邮件 |
 | `get_messages` | 获取多个邮件 |
@@ -145,6 +146,7 @@ npm install -g mcp-mail-server
 - **search_by_subject**: `subject` (字符串, 关键词)
 - **search_by_body**: `text` (字符串, 搜索文本)
 - **search_since_date**: `date` (字符串, 日期格式)
+- **search_unreplied_from_sender**: `sender` (字符串, 邮箱地址), `startDate` (字符串, 可选), `endDate` (字符串, 可选)
 - **search_larger_than**: `size` (数字, 字节数)
 
 ### 邮件操作
@@ -172,6 +174,7 @@ npm install -g mcp-mail-server
 
 ### 高级搜索
 - *"查找上周主题包含'紧急'的邮件"*
+- *"显示来自boss@company.com的未回复邮件"*
 - *"显示大于5MB的邮件"*
 - *"获取销售文件夹中的所有邮件"*
 
