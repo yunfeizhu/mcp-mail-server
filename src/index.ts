@@ -5,9 +5,94 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { IMAPClient, IMAPConfig } from './imap-client.js';
+import { IMAPClient, IMAPConfig, EmailMessage } from './imap-client.js';
 import { SMTPClient, SMTPConfig, EmailOptions } from './smtp-client.js';
 import { EMAIL_CONFIG } from './config.js';
+
+// 扩展的邮件类型，包含额外信息
+interface ExtendedEmailMessage extends EmailMessage {
+  sourceMailbox: string;
+}
+
+// 类型定义
+interface SearchResult {
+  searchType: string;
+  searchValue: string;
+  searchCriteria: any[];
+  mailboxesSearched: MailboxSearchResult[];
+  totalMatches: number;
+  messages: ExtendedEmailMessage[];
+  note?: string;
+  warning?: string;
+  // 向后兼容的属性
+  sender?: string;
+  recipient?: string;
+  subjectKeywords?: string;
+  bodyText?: string;
+  keyword?: string;
+  sinceDate?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
+interface MailboxSearchResult {
+  mailbox: string;
+  matchingUIDs: number[];
+  messageCount: number;
+  error?: string;
+}
+
+interface ReplyInfo {
+  originalUid: number;
+  originalFrom: string;
+  originalSubject?: string;
+  replyToAll: boolean;
+  includeOriginal: boolean;
+  recipients: {
+    to: string[];
+    cc?: string[];
+  };
+}
+
+// 参数接口定义
+interface ReplyToEmailArgs {
+  originalUid: number;
+  text: string;
+  html?: string;
+  replyToAll?: boolean;
+  includeOriginal?: boolean;
+}
+
+interface SendEmailArgs {
+  to: string;
+  subject: string;
+  text?: string;
+  html?: string;
+  cc?: string;
+  bcc?: string;
+}
+
+interface SearchArgs {
+  sender?: string;
+  subject?: string;
+  recipient?: string;
+  text?: string;
+  keyword?: string;
+  date?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
+interface MailboxArgs {
+  mailboxName?: string;
+  readOnly?: boolean;
+  openSent?: boolean;
+}
+
+
+// 常量定义
+const COMMON_SENT_MAILBOX_NAMES = ['INBOX.Sent', 'Sent', 'SENT', 'Sent Items', 'Sent Messages', '已发送'] as const;
+const COMMON_MAILBOX_NAMES = ['INBOX', ...COMMON_SENT_MAILBOX_NAMES] as const;
 
 class MailMCPServer {
   private server: Server;
@@ -19,16 +104,58 @@ class MailMCPServer {
     return `${context}: ${error instanceof Error ? error.message : String(error)}`;
   }
 
+  // 检测是否为仅日期格式（没有时间部分）
+  private isDateOnly(dateString: string): boolean {
+    // 匹配仅日期格式，如 "2025-08-19", "01-Jan-2025" 等
+    // 不包含时间的格式（没有冒号、T、空格后跟数字等）
+    const dateOnlyPatterns = [
+      /^\d{4}-\d{2}-\d{2}$/,           // 2025-08-19
+      /^\d{2}-\w{3}-\d{4}$/,          // 19-Aug-2025
+      /^\w{3}\s+\d{1,2},?\s+\d{4}$/   // Aug 19, 2025 or Aug 19 2025
+    ];
+    
+    return dateOnlyPatterns.some(pattern => pattern.test(dateString.trim()));
+  }
+
   // 按日期范围过滤邮件
-  private filterMessagesByDateRange(messages: any[], startDate?: string, endDate?: string): any[] {
+  private filterMessagesByDateRange(messages: ExtendedEmailMessage[], startDate?: string, endDate?: string): ExtendedEmailMessage[] {
     if (!startDate && !endDate) {
       return messages;
     }
     
-    const start = startDate ? new Date(startDate) : null;
-    const end = endDate ? new Date(endDate) : null;
+    let start: Date | null = null;
+    let end: Date | null = null;
     
-    return messages.filter(msg => {
+    // 解析开始日期
+    if (startDate) {
+      start = new Date(startDate);
+      if (isNaN(start.getTime())) {
+        console.error(`[Filter] Invalid start date format: ${startDate}, skipping start date filter`);
+        start = null;
+      } else {
+        console.error(`[Filter] Start date parsed as: ${start.toISOString()}`);
+      }
+    }
+    
+    // 解析结束日期
+    if (endDate) {
+      end = new Date(endDate);
+      if (isNaN(end.getTime())) {
+        console.error(`[Filter] Invalid end date format: ${endDate}, skipping end date filter`);
+        end = null;
+      } else {
+        // 如果endDate只是日期格式（没有时间部分），自动设置为当天的23:59:59
+        if (this.isDateOnly(endDate)) {
+          end.setHours(23, 59, 59, 999);
+          console.error(`[Filter] End date adjusted to end of day: ${end.toISOString()}`);
+        } else {
+          console.error(`[Filter] End date parsed as: ${end.toISOString()}`);
+        }
+      }
+    }
+    
+    const originalCount = messages.length;
+    const filtered = messages.filter(msg => {
       if (!msg.date) return true; // 如果没有日期信息，保留邮件
       
       const msgDate = new Date(msg.date);
@@ -39,17 +166,25 @@ class MailMCPServer {
       
       return true;
     });
+    
+    console.error(`[Filter] Date filtering: ${originalCount} -> ${filtered.length} messages`);
+    return filtered;
   }
 
   // 在多个邮箱中搜索的辅助方法
-  private async searchInMultipleMailboxes(criteria: any[], searchType: string, searchValue: string, startDate: string = '', endDate: string = ''): Promise<any> {
+  private async searchInMultipleMailboxes(
+    criteria: any[], 
+    searchType: string, 
+    searchValue: string, 
+    startDate: string = '', 
+    endDate: string = ''
+  ): Promise<SearchResult> {
     const mailboxesToSearch = ['INBOX'];
     
     // 尝试添加发件箱
-    const sentBoxNames = ['INBOX.Sent', 'Sent', 'SENT', 'Sent Items', 'Sent Messages', '已发送'];
     let sentBoxFound = false;
     
-    for (const sentName of sentBoxNames) {
+    for (const sentName of COMMON_SENT_MAILBOX_NAMES) {
       try {
         await this.imapClient!.openBox(sentName, true);
         mailboxesToSearch.push(sentName);
@@ -61,7 +196,7 @@ class MailMCPServer {
       }
     }
 
-    const searchResults: any = {
+    const searchResults: SearchResult = {
       searchType: searchType,
       searchValue: searchValue,
       searchCriteria: criteria,
@@ -79,7 +214,7 @@ class MailMCPServer {
         console.error(`[IMAP] Found ${uids.length} messages in ${mailboxName}`);
 
         // 获取邮件内容
-        let filteredMessages: any[] = [];
+        let filteredMessages: ExtendedEmailMessage[] = [];
         let filteredUIDs: number[] = [];
         
         if (uids.length > 0) {
@@ -87,7 +222,7 @@ class MailMCPServer {
           const messages = await this.imapClient!.fetchMessages(uids);
           
           // 为每个邮件添加来源邮箱信息
-          let messagesWithMailbox = messages.map(msg => ({
+          let messagesWithMailbox: ExtendedEmailMessage[] = messages.map(msg => ({
             ...msg,
             sourceMailbox: mailboxName
           }));
@@ -267,11 +402,11 @@ class MailMCPServer {
                 },
                 startDate: {
                   type: 'string',
-                  description: 'Optional start date for filtering (format: "2025-07-01" or "01-Jul-2025"). Leave empty to not filter by start date.'
+                  description: 'Optional start date/time for filtering. Supports multiple formats: "2025-07-01", "2025-07-01 14:30:00", "01-Jul-2025", or ISO format. Leave empty to not filter by start date.'
                 },
                 endDate: {
                   type: 'string',
-                  description: 'Optional end date for filtering (format: "2025-08-01" or "01-Aug-2025"). Leave empty to not filter by end date.'
+                  description: 'Optional end date/time for filtering. Supports multiple formats: "2025-08-01", "2025-08-01 23:59:59", "01-Aug-2025", or ISO format. Leave empty to not filter by end date.'
                 }
               },
               required: ['sender'],
@@ -289,11 +424,11 @@ class MailMCPServer {
                 },
                 startDate: {
                   type: 'string',
-                  description: 'Optional start date for filtering (format: "2025-07-01" or "01-Jul-2025"). Leave empty to not filter by start date.'
+                  description: 'Optional start date/time for filtering. Supports multiple formats: "2025-07-01", "2025-07-01 14:30:00", "01-Jul-2025", or ISO format. Leave empty to not filter by start date.'
                 },
                 endDate: {
                   type: 'string',
-                  description: 'Optional end date for filtering (format: "2025-08-01" or "01-Aug-2025"). Leave empty to not filter by end date.'
+                  description: 'Optional end date/time for filtering. Supports multiple formats: "2025-08-01", "2025-08-01 23:59:59", "01-Aug-2025", or ISO format. Leave empty to not filter by end date.'
                 }
               },
               required: ['subject'],
@@ -311,11 +446,11 @@ class MailMCPServer {
                 },
                 startDate: {
                   type: 'string',
-                  description: 'Optional start date for filtering (format: "2025-07-01" or "01-Jul-2025"). Leave empty to not filter by start date.'
+                  description: 'Optional start date/time for filtering. Supports multiple formats: "2025-07-01", "2025-07-01 14:30:00", "01-Jul-2025", or ISO format. Leave empty to not filter by start date.'
                 },
                 endDate: {
                   type: 'string',
-                  description: 'Optional end date for filtering (format: "2025-08-01" or "01-Aug-2025"). Leave empty to not filter by end date.'
+                  description: 'Optional end date/time for filtering. Supports multiple formats: "2025-08-01", "2025-08-01 23:59:59", "01-Aug-2025", or ISO format. Leave empty to not filter by end date.'
                 }
               },
               required: ['recipient'],
@@ -347,11 +482,11 @@ class MailMCPServer {
                 },
                 startDate: {
                   type: 'string',
-                  description: 'Optional start date for filtering (format: "2025-07-01" or "01-Jul-2025"). Leave empty to not filter by start date.'
+                  description: 'Optional start date/time for filtering. Supports multiple formats: "2025-07-01", "2025-07-01 14:30:00", "01-Jul-2025", or ISO format. Leave empty to not filter by start date.'
                 },
                 endDate: {
                   type: 'string',
-                  description: 'Optional end date for filtering (format: "2025-08-01" or "01-Aug-2025"). Leave empty to not filter by end date.'
+                  description: 'Optional end date/time for filtering. Supports multiple formats: "2025-08-01", "2025-08-01 23:59:59", "01-Aug-2025", or ISO format. Leave empty to not filter by end date.'
                 }
               },
               required: ['sender'],
@@ -369,11 +504,11 @@ class MailMCPServer {
                 },
                 startDate: {
                   type: 'string',
-                  description: 'Optional start date for filtering (format: "2025-07-01" or "01-Jul-2025"). Leave empty to not filter by start date.'
+                  description: 'Optional start date/time for filtering. Supports multiple formats: "2025-07-01", "2025-07-01 14:30:00", "01-Jul-2025", or ISO format. Leave empty to not filter by start date.'
                 },
                 endDate: {
                   type: 'string',
-                  description: 'Optional end date for filtering (format: "2025-08-01" or "01-Aug-2025"). Leave empty to not filter by end date.'
+                  description: 'Optional end date/time for filtering. Supports multiple formats: "2025-08-01", "2025-08-01 23:59:59", "01-Aug-2025", or ISO format. Leave empty to not filter by end date.'
                 }
               },
               required: ['text'],
@@ -391,11 +526,11 @@ class MailMCPServer {
                 },
                 startDate: {
                   type: 'string',
-                  description: 'Optional start date for filtering (format: "2025-07-01" or "01-Jul-2025"). Leave empty to not filter by start date.'
+                  description: 'Optional start date/time for filtering. Supports multiple formats: "2025-07-01", "2025-07-01 14:30:00", "01-Jul-2025", or ISO format. Leave empty to not filter by start date.'
                 },
                 endDate: {
                   type: 'string',
-                  description: 'Optional end date for filtering (format: "2025-08-01" or "01-Aug-2025"). Leave empty to not filter by end date.'
+                  description: 'Optional end date/time for filtering. Supports multiple formats: "2025-08-01", "2025-08-01 23:59:59", "01-Aug-2025", or ISO format. Leave empty to not filter by end date.'
                 }
               },
               required: ['keyword'],
@@ -478,6 +613,38 @@ class MailMCPServer {
               required: ['to', 'subject'],
             },
           },
+          {
+            name: 'reply_to_email',
+            description: 'Reply to a specific email by UID. Automatically sets reply headers, adds Re: prefix, and includes original message. Auto-connects to both IMAP and SMTP if not already connected.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                originalUid: {
+                  type: 'number',
+                  description: 'UID of the original message to reply to',
+                },
+                text: {
+                  type: 'string',
+                  description: 'Reply message text',
+                },
+                html: {
+                  type: 'string',
+                  description: 'Reply message HTML (optional)',
+                },
+                replyToAll: {
+                  type: 'boolean',
+                  description: 'Reply to all recipients instead of just sender (default: false)',
+                  default: false
+                },
+                includeOriginal: {
+                  type: 'boolean',
+                  description: 'Include original message in reply (default: true)',
+                  default: true
+                },
+              },
+              required: ['originalUid', 'text'],
+            },
+          },
           // === 邮件管理 ===
           {
             name: 'delete_message',
@@ -520,11 +687,11 @@ class MailMCPServer {
       try {
         switch (name) {
           case 'open_mailbox':
-            return await this.handleOpenMailbox(args);
+            return await this.handleOpenMailbox(args || {});
           case 'list_mailboxes':
             return await this.handleListMailboxes();
           case 'search_by_sender':
-            return await this.handleSearchBySender(args);
+            return await this.handleSearchBySender(args || {});
           case 'search_by_subject':
             return await this.handleSearchBySubject(args);
           case 'search_by_recipient':
@@ -552,7 +719,9 @@ class MailMCPServer {
           case 'get_connection_status':
             return await this.handleGetConnectionStatus();
           case 'send_email':
-            return await this.handleSendEmail(args);
+            return await this.handleSendEmail(args as unknown as SendEmailArgs);
+          case 'reply_to_email':
+            return await this.handleReplyToEmail(args as unknown as ReplyToEmailArgs);
           case 'connect_all':
             return await this.handleConnectAll();
           case 'disconnect_all':
@@ -623,7 +792,7 @@ class MailMCPServer {
     }
   }
 
-  private async handleOpenMailbox(args: any) {
+  private async handleOpenMailbox(args: MailboxArgs) {
     await this.ensureRequiredConnections(true, false);
 
     const mailboxName = args.mailboxName || 'INBOX';
@@ -653,7 +822,7 @@ class MailMCPServer {
               sentFound = true;
               
               // 重新打开主邮箱
-              const reopenedMainBox = await this.imapClient!.openBox(mailboxName, readOnly);
+              await this.imapClient!.openBox(mailboxName, readOnly);
               results.currentlyOpen = mailboxName;
               results.note = `Retrieved info from both ${mailboxName} and ${sentName}. Currently open: ${mailboxName}`;
               break;
@@ -736,7 +905,7 @@ class MailMCPServer {
   }
 
 
-  private async handleSearchBySender(args: any) {
+  private async handleSearchBySender(args: SearchArgs) {
     await this.ensureRequiredConnections(true, false);
 
     const sender = args.sender;
@@ -1169,7 +1338,7 @@ class MailMCPServer {
   }
 
 
-  private async handleSendEmail(args: any) {
+  private async handleSendEmail(args: SendEmailArgs) {
     await this.ensureRequiredConnections(false, true);
 
     const emailOptions: EmailOptions = {
@@ -1188,16 +1357,243 @@ class MailMCPServer {
     try {
       const result = await this.smtpClient!.sendMail(emailOptions);
       
+      // 尝试保存已发送邮件到发件箱
+      await this.saveSentMessage(emailOptions, result.messageId);
+      
+      const responseWithSentInfo = {
+        ...result,
+        sentFolderSaved: true,
+        note: 'Email sent successfully and saved to sent folder'
+      };
+      
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(result, null, 2),
+            text: JSON.stringify(responseWithSentInfo, null, 2),
           },
         ],
       };
     } catch (error) {
       throw new Error(this.formatError(error, 'Failed to send email'));
+    }
+  }
+
+  private async handleReplyToEmail(args: ReplyToEmailArgs) {
+    await this.ensureRequiredConnections(true, true);
+
+    const originalUid = args.originalUid;
+    const replyText = args.text;
+    const replyHtml = args.html;
+    const replyToAll = args.replyToAll || false;
+    const includeOriginal = args.includeOriginal !== false; // 默认为true
+
+    if (typeof originalUid !== 'number') {
+      throw new Error('originalUid must be a number');
+    }
+
+    if (!replyText) {
+      throw new Error('text parameter is required');
+    }
+
+    try {
+      // 确保邮箱连接并查找原始邮件
+      await this.ensureMailboxOpen();
+      
+      console.error(`[Reply] Fetching original message with UID: ${originalUid}`);
+      const originalMessage = await this.findMessageInMultipleMailboxes(originalUid);
+      
+      if (!originalMessage) {
+        throw new Error(`Original message with UID ${originalUid} not found in any mailbox`);
+      }
+
+      // 提取发件人信息
+      const originalFrom = this.extractEmailFromAddress(originalMessage.from);
+      if (!originalFrom) {
+        throw new Error('Could not extract sender email from original message');
+      }
+
+      // 构建收件人列表
+      let toRecipients: string[] = [originalFrom];
+      let ccRecipients: string[] = [];
+
+      if (replyToAll) {
+        // 回复全部：包含原始邮件的所有收件人
+        const originalTo = this.extractEmailsFromAddressField(originalMessage.to);
+        const originalCc = this.extractEmailsFromAddressField(originalMessage.cc);
+        
+        // 合并所有收件人，去重并排除自己的邮箱
+        const allRecipients = [...originalTo, ...originalCc];
+        const filteredRecipients = allRecipients.filter(email => 
+          email !== EMAIL_CONFIG.IMAP.username && email !== originalFrom
+        );
+        
+        if (filteredRecipients.length > 0) {
+          ccRecipients = filteredRecipients;
+        }
+      }
+
+      // 构建主题（添加Re:前缀）
+      let subject = originalMessage.subject || '';
+      if (!subject.toLowerCase().startsWith('re:')) {
+        subject = `Re: ${subject}`;
+      }
+
+      // 构建回复内容
+      let finalText = replyText;
+      let finalHtml = replyHtml;
+
+      if (includeOriginal && originalMessage) {
+        const originalDate = originalMessage.date ? new Date(originalMessage.date).toLocaleString() : 'Unknown Date';
+        const originalFromDisplay = originalMessage.from || 'Unknown Sender';
+        
+        // 构建引用的原始邮件文本
+        const quotedText = this.buildQuotedText(originalMessage.text || '', originalDate, originalFromDisplay);
+        finalText = `${replyText}\n\n${quotedText}`;
+
+        // 如果有HTML内容，也构建HTML格式的引用
+        if (replyHtml || originalMessage.html) {
+          const quotedHtml = this.buildQuotedHtml(originalMessage.html || originalMessage.text || '', originalDate, originalFromDisplay);
+          finalHtml = `${replyHtml || this.textToHtml(replyText)}<br><br>${quotedHtml}`;
+        }
+      }
+
+      // 构建邮件选项
+      const emailOptions: EmailOptions = {
+        to: toRecipients,
+        cc: ccRecipients.length > 0 ? ccRecipients : undefined,
+        subject: subject,
+        text: finalText,
+        html: finalHtml,
+      };
+
+      // 发送回复邮件
+      console.error(`[Reply] Sending reply to: ${toRecipients.join(', ')}${ccRecipients.length > 0 ? ` (CC: ${ccRecipients.join(', ')})` : ''}`);
+      const result = await this.smtpClient!.sendMail(emailOptions);
+      
+      // 尝试保存已发送的回复邮件到发件箱
+      await this.saveSentMessage(emailOptions, result.messageId);
+      
+      const replyInfo: ReplyInfo = {
+        originalUid: originalUid,
+        originalFrom: originalFrom,
+        originalSubject: originalMessage.subject,
+        replyToAll: replyToAll,
+        includeOriginal: includeOriginal,
+        recipients: {
+          to: toRecipients,
+          cc: ccRecipients.length > 0 ? ccRecipients : undefined
+        }
+      };
+
+      const responseData = {
+        ...result,
+        replyInfo,
+        sentFolderSaved: true,
+        note: 'Reply sent successfully and saved to sent folder'
+      };
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(responseData, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(this.formatError(error, 'Failed to reply to email'));
+    }
+  }
+
+  // 辅助方法：从地址字段提取邮箱地址
+  private extractEmailFromAddress(addressField: any): string | null {
+    if (!addressField) return null;
+    
+    if (Array.isArray(addressField) && addressField.length > 0) {
+      return addressField[0].address || addressField[0];
+    }
+    
+    if (typeof addressField === 'string') {
+      // 提取 "Name <email@domain.com>" 格式中的邮箱
+      const match = addressField.match(/<([^>]+)>/) || addressField.match(/([^\s<>]+@[^\s<>]+)/);
+      return match ? match[1] : addressField;
+    }
+
+    return addressField.address || null;
+  }
+
+  // 辅助方法：从地址字段提取多个邮箱地址
+  private extractEmailsFromAddressField(addressField: any): string[] {
+    if (!addressField) return [];
+    
+    if (Array.isArray(addressField)) {
+      return addressField.map(addr => addr.address || addr).filter(Boolean);
+    }
+    
+    if (typeof addressField === 'string') {
+      // 简单分割逗号分隔的邮箱
+      return addressField.split(',').map(email => {
+        const match = email.trim().match(/<([^>]+)>/) || email.trim().match(/([^\s<>]+@[^\s<>]+)/);
+        return match ? match[1] : email.trim();
+      }).filter(Boolean);
+    }
+
+    const extracted = this.extractEmailFromAddress(addressField);
+    return extracted ? [extracted] : [];
+  }
+
+  // 辅助方法：构建文本格式的引用内容
+  private buildQuotedText(originalText: string, date: string, from: string): string {
+    const lines = originalText.split('\n').map(line => `> ${line}`);
+    return `On ${date}, ${from} wrote:\n${lines.join('\n')}`;
+  }
+
+  // 辅助方法：构建HTML格式的引用内容
+  private buildQuotedHtml(originalContent: string, date: string, from: string): string {
+    const quotedContent = originalContent.replace(/\n/g, '<br>');
+    return `<div style="border-left: 3px solid #ccc; padding-left: 10px; margin-left: 10px; color: #666;">
+      <p><strong>On ${date}, ${from} wrote:</strong></p>
+      <div>${quotedContent}</div>
+    </div>`;
+  }
+
+  // 辅助方法：将纯文本转换为HTML
+  private textToHtml(text: string): string {
+    return text.replace(/\n/g, '<br>').replace(/  /g, '&nbsp;&nbsp;');
+  }
+
+  // 通用方法：在多个邮箱中查找邮件
+  private async findMessageInMultipleMailboxes(uid: number): Promise<EmailMessage | null> {
+    // 如果当前有打开的邮箱，先尝试在当前邮箱中查找
+    if (this.imapClient!.getCurrentBox()) {
+      try {
+        return await this.imapClient!.getMessage(uid);
+      } catch (error) {
+        console.error(`[Search] Message not found in current mailbox: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    // 在常见邮箱中搜索
+    for (const mailboxName of COMMON_MAILBOX_NAMES) {
+      try {
+        await this.imapClient!.openBox(mailboxName, true);
+        const message = await this.imapClient!.getMessage(uid);
+        console.error(`[Search] Found message in mailbox: ${mailboxName}`);
+        return message;
+      } catch (error) {
+        console.error(`[Search] Message not found in ${mailboxName}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    return null;
+  }
+
+  // 通用方法：确保邮箱已打开
+  private async ensureMailboxOpen(defaultMailbox: string = 'INBOX'): Promise<void> {
+    if (!this.imapClient!.getCurrentBox()) {
+      console.error(`[IMAP] No mailbox currently open, opening ${defaultMailbox}`);
+      await this.imapClient!.openBox(defaultMailbox, true);
     }
   }
 
@@ -1290,6 +1686,73 @@ class MailMCPServer {
       console.error('Configuration error:', error instanceof Error ? error.message : String(error));
       console.error('Please ensure all required environment variables are set in your MCP server configuration.');
       throw error;
+    }
+  }
+
+  // 构建邮件的原始格式用于保存到IMAP文件夹
+  private buildRawEmailMessage(emailOptions: EmailOptions, messageId?: string): string {
+    const now = new Date();
+    const dateString = now.toUTCString();
+    
+    // 生成 Message-ID
+    const msgId = messageId || `<${Date.now()}.${Math.random().toString(36)}@${EMAIL_CONFIG.IMAP.host}>`;
+    
+    let rawMessage = '';
+    rawMessage += `Message-ID: ${msgId}\r\n`;
+    rawMessage += `Date: ${dateString}\r\n`;
+    rawMessage += `From: ${EMAIL_CONFIG.IMAP.username}\r\n`;
+    rawMessage += `To: ${Array.isArray(emailOptions.to) ? emailOptions.to.join(', ') : emailOptions.to}\r\n`;
+    
+    if (emailOptions.cc) {
+      rawMessage += `Cc: ${Array.isArray(emailOptions.cc) ? emailOptions.cc.join(', ') : emailOptions.cc}\r\n`;
+    }
+    
+    if (emailOptions.bcc) {
+      rawMessage += `Bcc: ${Array.isArray(emailOptions.bcc) ? emailOptions.bcc.join(', ') : emailOptions.bcc}\r\n`;
+    }
+    
+    rawMessage += `Subject: ${emailOptions.subject}\r\n`;
+    rawMessage += `MIME-Version: 1.0\r\n`;
+    
+    // 如果有HTML和文本内容，使用multipart
+    if (emailOptions.html && emailOptions.text) {
+      const boundary = `----=_Part_${Date.now()}_${Math.random().toString(36)}`;
+      rawMessage += `Content-Type: multipart/alternative; boundary="${boundary}"\r\n\r\n`;
+      
+      rawMessage += `--${boundary}\r\n`;
+      rawMessage += `Content-Type: text/plain; charset=utf-8\r\n`;
+      rawMessage += `Content-Transfer-Encoding: 8bit\r\n\r\n`;
+      rawMessage += `${emailOptions.text}\r\n\r\n`;
+      
+      rawMessage += `--${boundary}\r\n`;
+      rawMessage += `Content-Type: text/html; charset=utf-8\r\n`;
+      rawMessage += `Content-Transfer-Encoding: 8bit\r\n\r\n`;
+      rawMessage += `${emailOptions.html}\r\n\r\n`;
+      
+      rawMessage += `--${boundary}--\r\n`;
+    } else if (emailOptions.html) {
+      rawMessage += `Content-Type: text/html; charset=utf-8\r\n`;
+      rawMessage += `Content-Transfer-Encoding: 8bit\r\n\r\n`;
+      rawMessage += `${emailOptions.html}\r\n`;
+    } else {
+      rawMessage += `Content-Type: text/plain; charset=utf-8\r\n`;
+      rawMessage += `Content-Transfer-Encoding: 8bit\r\n\r\n`;
+      rawMessage += `${emailOptions.text || ''}\r\n`;
+    }
+    
+    return rawMessage;
+  }
+
+  // 保存已发送邮件到发件箱
+  private async saveSentMessage(emailOptions: EmailOptions, messageId?: string): Promise<void> {
+    try {
+      await this.ensureRequiredConnections(true, false);
+      const rawMessage = this.buildRawEmailMessage(emailOptions, messageId);
+      await this.imapClient!.saveMessageToFolder(rawMessage);
+      console.error('[Email] Message saved to sent folder successfully');
+    } catch (error) {
+      console.error('[Email] Failed to save message to sent folder:', error instanceof Error ? error.message : String(error));
+      // 不抛出错误，因为邮件发送成功是主要目标
     }
   }
 

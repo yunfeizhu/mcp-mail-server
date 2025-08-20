@@ -125,6 +125,7 @@ npm install -g mcp-mail-server
 | `get_unseen_messages` | 获取所有未读邮件 |
 | `get_recent_messages` | 获取最近邮件 |
 | `send_email` | 通过SMTP发送邮件 |
+| `reply_to_email` | 回复指定邮件 |
 
 <details>
 <summary>详细工具参数</summary>
@@ -153,6 +154,7 @@ npm install -g mcp-mail-server
 
 ### 邮件发送
 - **send_email**: `to` (字符串), `subject` (字符串), `text` (字符串, 可选), `html` (字符串, 可选), `cc` (字符串, 可选), `bcc` (字符串, 可选)
+- **reply_to_email**: `originalUid` (数字), `text` (字符串), `html` (字符串, 可选), `replyToAll` (布尔值, 可选), `includeOriginal` (布尔值, 可选)
 
 </details>
 
@@ -166,6 +168,7 @@ npm install -g mcp-mail-server
 - *"显示所有未读邮件"*  
 - *"搜索来自boss@company.com的邮件"*
 - *"发送邮件给team@company.com关于会议"*
+- *"回复UID为123的邮件"*
 
 ### 高级搜索
 - *"查找上周主题包含'紧急'的邮件"*
