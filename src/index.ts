@@ -1392,9 +1392,6 @@ class MailMCPServer {
       throw new Error('originalUid must be a number');
     }
 
-    if (!replyText) {
-      throw new Error('text parameter is required');
-    }
 
     try {
       // 确保邮箱连接并查找原始邮件
