@@ -396,6 +396,54 @@ export class IMAPClient extends EventEmitter {
     });
   }
 
+  async addFlags(uid: number, flags: string[]): Promise<void> {
+    if (!this.imap) {
+      throw new Error('Not connected to IMAP server');
+    }
+
+    // 如果没有打开邮箱，自动打开收件箱
+    if (!this.currentBox) {
+      await this.openBox('INBOX', false); // 需要写权限来添加标记
+    }
+
+    return new Promise((resolve, reject) => {
+      this.imap!.addFlags(uid, flags, (error) => {
+        if (error) {
+          console.error(`[IMAP] Failed to add flags ${flags.join(', ')} to message ${uid}:`, error.message);
+          reject(new Error(`Failed to add flags: ${error.message}`));
+          return;
+        }
+
+        console.error(`[IMAP] Added flags ${flags.join(', ')} to message ${uid}`);
+        resolve();
+      });
+    });
+  }
+
+  async removeFlags(uid: number, flags: string[]): Promise<void> {
+    if (!this.imap) {
+      throw new Error('Not connected to IMAP server');
+    }
+
+    // 如果没有打开邮箱，自动打开收件箱
+    if (!this.currentBox) {
+      await this.openBox('INBOX', false); // 需要写权限来移除标记
+    }
+
+    return new Promise((resolve, reject) => {
+      this.imap!.delFlags(uid, flags, (error) => {
+        if (error) {
+          console.error(`[IMAP] Failed to remove flags ${flags.join(', ')} from message ${uid}:`, error.message);
+          reject(new Error(`Failed to remove flags: ${error.message}`));
+          return;
+        }
+
+        console.error(`[IMAP] Removed flags ${flags.join(', ')} from message ${uid}`);
+        resolve();
+      });
+    });
+  }
+
   async getMessageCount(): Promise<number> {
     if (!this.currentBox) {
       await this.openBox('INBOX', true);

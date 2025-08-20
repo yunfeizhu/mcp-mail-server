@@ -33,6 +33,7 @@ interface SearchResult {
   sinceDate?: string;
   startDate?: string;
   endDate?: string;
+  excludeReplied?: boolean;
 }
 
 interface MailboxSearchResult {
@@ -177,7 +178,8 @@ class MailMCPServer {
     searchType: string, 
     searchValue: string, 
     startDate: string = '', 
-    endDate: string = ''
+    endDate: string = '',
+    excludeReplied: boolean = false
   ): Promise<SearchResult> {
     const mailboxesToSearch = ['INBOX'];
     
@@ -210,7 +212,14 @@ class MailMCPServer {
         console.error(`[IMAP] Searching in mailbox: ${mailboxName}`);
         await this.imapClient!.openBox(mailboxName, true);
         
-        const uids = await this.imapClient!.search(criteria);
+        // 构建搜索条件，如果需要排除已回复的邮件
+        let searchCriteria = criteria;
+        if (excludeReplied) {
+          // 添加条件排除带有 'AutoReplied' 标记的邮件
+          searchCriteria = [...criteria, 'UNKEYWORD', 'AutoReplied'];
+        }
+        
+        const uids = await this.imapClient!.search(searchCriteria);
         console.error(`[IMAP] Found ${uids.length} messages in ${mailboxName}`);
 
         // 获取邮件内容
@@ -536,6 +545,28 @@ class MailMCPServer {
               required: ['keyword'],
             },
           },
+          {
+            name: 'search_unreplied_emails',
+            description: 'Search for emails from specific sender that have not been replied to. Perfect for automated polling to find messages requiring responses. Auto-connects if not already connected.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                sender: {
+                  type: 'string',
+                  description: 'Email address of the sender to search for'
+                },
+                startDate: {
+                  type: 'string',
+                  description: 'Optional start date/time for filtering. Supports multiple formats: "2025-07-01", "2025-07-01 14:30:00", "01-Jul-2025", or ISO format. Leave empty to not filter by start date.'
+                },
+                endDate: {
+                  type: 'string',
+                  description: 'Optional end date/time for filtering. Supports multiple formats: "2025-08-01", "2025-08-01 23:59:59", "01-Aug-2025", or ISO format. Leave empty to not filter by end date.'
+                }
+              },
+              required: ['sender'],
+            },
+          },
           // === 邮件读取 ===
           {
             name: 'get_messages',
@@ -704,6 +735,8 @@ class MailMCPServer {
             return await this.handleSearchByBody(args);
           case 'search_with_keyword':
             return await this.handleSearchWithKeyword(args);
+          case 'search_unreplied_emails':
+            return await this.handleSearchUnrepliedEmails(args as SearchArgs);
           case 'get_messages':
             return await this.handleGetMessages(args);
           case 'get_message':
@@ -1146,6 +1179,49 @@ class MailMCPServer {
     }
   }
 
+  private async handleSearchUnrepliedEmails(args: SearchArgs) {
+    try {
+      await this.ensureRequiredConnections(true, false);
+
+      const sender = args.sender;
+      const startDate = args.startDate || '';
+      const endDate = args.endDate || '';
+
+      if (!sender) {
+        throw new Error('sender parameter is required');
+      }
+
+      console.error(`[IMAP] Searching unreplied messages from sender:`, sender);
+      
+      // 搜索来自指定发件人的邮件，排除已回复的
+      const criteria = ['FROM', sender];
+      const result = await this.searchInMultipleMailboxes(criteria, 'Unreplied messages from sender', sender, startDate, endDate, true);
+      
+      result.sender = sender;
+      if (startDate) result.startDate = startDate;
+      if (endDate) result.endDate = endDate;
+      result.excludeReplied = true;
+      
+      // 添加使用提示
+      if (result.totalMatches === 0) {
+        result.note = `No unreplied messages found from ${sender}. This could mean:\n1. No messages from this sender\n2. All messages have been replied to\n3. Sender address doesn't match exactly`;
+      } else {
+        result.note = `Found ${result.totalMatches} unreplied messages from ${sender}. These messages have not been marked as replied and may require your attention.`;
+      }
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(this.formatError(error, 'Search unreplied emails failed'));
+    }
+  }
+
   private async handleGetMessages(args: any) {
     await this.ensureRequiredConnections(true, false);
 
@@ -1470,6 +1546,15 @@ class MailMCPServer {
       
       // 尝试保存已发送的回复邮件到发件箱
       await this.saveSentMessage(emailOptions, result.messageId);
+      
+      // 给原始邮件添加已回复标记
+      try {
+        await this.imapClient!.addFlags(originalUid, ['\\Answered', 'AutoReplied']);
+        console.error(`[Reply] Added reply flags to message ${originalUid}`);
+      } catch (flagError) {
+        console.error(`[Reply] Warning: Failed to add reply flags to message ${originalUid}:`, flagError instanceof Error ? flagError.message : String(flagError));
+        // 不抛出错误，因为邮件已经成功发送
+      }
       
       const replyInfo: ReplyInfo = {
         originalUid: originalUid,
