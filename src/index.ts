@@ -1136,42 +1136,30 @@ class MailMCPServer {
       
       console.error(`[IMAP] Found ${fromSenderResult.messages.length} messages from sender, ${toSenderResult.messages.length} messages to sender`);
       
-      // 3. 提取已回复的主题（从发给发件人的邮件中）
-      const repliedSubjects = new Set<string>();
-      toSenderResult.messages.forEach(msg => {
-        const cleanSubject = this.cleanReplySubject(msg.subject || '');
-        if (cleanSubject) {
-          repliedSubjects.add(cleanSubject.toLowerCase()); // 不区分大小写匹配
-        }
-      });
+      // 3. 使用改进的算法检测未回复邮件
+      const unrepliedMessages = this.detectUnrepliedMessagesAdvanced(
+        fromSenderResult.messages, 
+        toSenderResult.messages,
+        sender
+      );
       
-      console.error(`[IMAP] Found ${repliedSubjects.size} unique replied subjects`);
+      console.error(`[IMAP] Found ${unrepliedMessages.length} unreplied messages using advanced detection`);
       
-      // 4. 过滤出未回复的邮件
-      const unrepliedMessages = fromSenderResult.messages.filter(msg => {
-        const cleanSubject = this.cleanReplySubject(msg.subject || '');
-        if (!cleanSubject) return true; // 如果主题为空，认为未回复
-        return !repliedSubjects.has(cleanSubject.toLowerCase());
-      });
-      
-      console.error(`[IMAP] Found ${unrepliedMessages.length} unreplied messages`);
-      
-      // 5. 构建结果
+      // 4. 构建结果
       const result: SearchResult = {
-        searchType: 'Unreplied messages from sender',
+        searchType: 'Unreplied messages from sender (Advanced)',
         searchValue: sender,
         searchCriteria: ['FROM', sender],
         mailboxesSearched: fromSenderResult.mailboxesSearched,
         totalMatches: unrepliedMessages.length,
         messages: unrepliedMessages,
-        sender: sender, // 保持向后兼容
-        note: `Found ${unrepliedMessages.length} unreplied messages from ${sender}. Checked against ${repliedSubjects.size} replied subjects.`
+        sender: sender,
+        note: `Found ${unrepliedMessages.length} unreplied messages from ${sender} using advanced thread-aware detection.`
       };
       
       if (startDate) result.startDate = startDate;
       if (endDate) result.endDate = endDate;
       
-      // 如果有过滤条件，添加说明
       if (startDate || endDate) {
         result.note += ' (filtered by date range)';
       }
@@ -1653,6 +1641,141 @@ class MailMCPServer {
     if (!subject) return '';
     // 移除各种形式的回复前缀（Re:, RE:, 回复:等）和多个空格
     return subject.replace(/^(re:|RE:|回复:|答复:)\s*/i, '').trim();
+  }
+
+  /**
+   * 改进的未回复邮件检测算法
+   * 考虑时间顺序和会话线程，而不仅仅依赖主题匹配
+   */
+  private detectUnrepliedMessagesAdvanced(
+    fromSenderMessages: ExtendedEmailMessage[], 
+    toSenderMessages: ExtendedEmailMessage[],
+    senderEmail: string
+  ): ExtendedEmailMessage[] {
+    const unrepliedMessages: ExtendedEmailMessage[] = [];
+    
+    // 按时间排序邮件
+    const sortedFromSender = [...fromSenderMessages].sort((a, b) => 
+      new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
+    const sortedToSender = [...toSenderMessages].sort((a, b) => 
+      new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
+    
+    console.error(`[IMAP] Analyzing ${sortedFromSender.length} messages from sender and ${sortedToSender.length} messages to sender`);
+    
+    for (const fromMessage of sortedFromSender) {
+      const isReplied = this.isMessageReplied(fromMessage, sortedToSender, senderEmail);
+      
+      if (!isReplied) {
+        unrepliedMessages.push(fromMessage);
+        console.error(`[IMAP] Message UID ${fromMessage.uid} (${fromMessage.subject}) marked as unreplied`);
+      } else {
+        console.error(`[IMAP] Message UID ${fromMessage.uid} (${fromMessage.subject}) has been replied`);
+      }
+    }
+    
+    return unrepliedMessages;
+  }
+  
+  /**
+   * 判断一封邮件是否已被回复
+   * 使用多重检测策略：时间顺序 + 主题匹配 + 会话线程
+   */
+  private isMessageReplied(
+    originalMessage: ExtendedEmailMessage, 
+    sentMessages: ExtendedEmailMessage[],
+    senderEmail: string
+  ): boolean {
+    const originalDate = new Date(originalMessage.date);
+    const originalSubject = this.cleanReplySubject(originalMessage.subject || '').toLowerCase();
+    
+    // 策略1: 精确主题匹配 + 时间顺序
+    // 查找在原邮件之后发送的、主题匹配的回复
+    const exactSubjectReplies = sentMessages.filter(sentMsg => {
+      const sentDate = new Date(sentMsg.date);
+      const sentSubject = this.cleanReplySubject(sentMsg.subject || '').toLowerCase();
+      
+      return sentDate > originalDate && 
+             sentSubject === originalSubject &&
+             sentSubject.length > 0; // 确保主题不为空
+    });
+    
+    if (exactSubjectReplies.length > 0) {
+      console.error(`[IMAP] Found exact subject match reply for "${originalSubject}"`);
+      return true;
+    }
+    
+    // 策略2: 会话线程检测
+    // 检查是否有回复邮件的主题包含原邮件主题（处理嵌套回复）
+    if (originalSubject.length > 3) { // 只对有意义的主题进行检测
+      const threadReplies = sentMessages.filter(sentMsg => {
+        const sentDate = new Date(sentMsg.date);
+        const sentSubject = this.cleanReplySubject(sentMsg.subject || '').toLowerCase();
+        
+        return sentDate > originalDate && 
+               sentSubject.includes(originalSubject) &&
+               sentSubject !== originalSubject; // 避免重复计算
+      });
+      
+      if (threadReplies.length > 0) {
+        console.error(`[IMAP] Found thread-based reply for "${originalSubject}"`);
+        return true;
+      }
+    }
+    
+    // 策略3: 时间窗口内的相关回复检测
+    // 在原邮件后的合理时间窗口内（如7天），查找可能的回复
+    const timeWindowMs = 7 * 24 * 60 * 60 * 1000; // 7天
+    const windowEnd = new Date(originalDate.getTime() + timeWindowMs);
+    
+    const timeWindowReplies = sentMessages.filter(sentMsg => {
+      const sentDate = new Date(sentMsg.date);
+      return sentDate > originalDate && 
+             sentDate <= windowEnd &&
+             this.isLikelyReplyByContent(originalMessage, sentMsg);
+    });
+    
+    if (timeWindowReplies.length > 0) {
+      console.error(`[IMAP] Found time-window based reply for "${originalSubject}"`);
+      return true;
+    }
+    
+    return false;
+  }
+  
+  /**
+   * 基于内容相似性判断是否为回复
+   * 这是一个简化的实现，可以根据需要进一步优化
+   */
+  private isLikelyReplyByContent(
+    originalMessage: ExtendedEmailMessage, 
+    potentialReply: ExtendedEmailMessage
+  ): boolean {
+    const originalSubject = this.cleanReplySubject(originalMessage.subject || '').toLowerCase();
+    const replySubject = this.cleanReplySubject(potentialReply.subject || '').toLowerCase();
+    
+    // 如果主题完全相同
+    if (originalSubject === replySubject && originalSubject.length > 0) {
+      return true;
+    }
+    
+    // 如果回复主题包含原主题的关键词（长度大于5的情况下）
+    if (originalSubject.length > 5 && replySubject.includes(originalSubject)) {
+      return true;
+    }
+    
+    // 检查是否有共同的关键词（简化实现）
+    const originalWords = originalSubject.split(/\s+/).filter(word => word.length > 3);
+    const replyWords = replySubject.split(/\s+/).filter(word => word.length > 3);
+    
+    if (originalWords.length > 0 && replyWords.length > 0) {
+      const commonWords = originalWords.filter(word => replyWords.includes(word));
+      // 如果有超过一半的关键词匹配，认为可能是回复
+      return commonWords.length >= Math.min(2, Math.ceil(originalWords.length / 2));
+    }
+    
+    return false;
   }
 
   // 辅助方法：构建文本格式的引用内容
