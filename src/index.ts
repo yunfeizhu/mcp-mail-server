@@ -1256,7 +1256,51 @@ class MailMCPServer {
     const markSeen = args.markSeen || false;
 
     try {
-      const messages = await this.imapClient!.fetchMessages(uids, { markSeen });
+      // 首先尝试在当前邮箱中获取所有邮件
+      let messages = [];
+      let foundUIDs = new Set();
+      
+      // 如果当前有打开的邮箱，先尝试在当前邮箱中查找
+      if (this.imapClient!.getCurrentBox()) {
+        try {
+          const currentBoxMessages = await this.imapClient!.fetchMessages(uids, { markSeen });
+          messages.push(...currentBoxMessages);
+          // 记录已找到的UID
+          currentBoxMessages.forEach(msg => foundUIDs.add(msg.uid));
+        } catch (error) {
+          console.error(`[GetMessages] Failed to fetch from current mailbox: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      
+      // 找出还未找到的UID
+      const remainingUIDs = uids.filter(uid => !foundUIDs.has(uid));
+      
+      // 如果还有未找到的邮件，在其他常见邮箱中搜索
+      if (remainingUIDs.length > 0) {
+        for (const mailboxName of COMMON_MAILBOX_NAMES) {
+          if (remainingUIDs.length === 0) break; // 如果都找到了就退出
+          
+          try {
+            await this.imapClient!.openBox(mailboxName, true);
+            const mailboxMessages = await this.imapClient!.fetchMessages(remainingUIDs, { markSeen });
+            
+            if (mailboxMessages.length > 0) {
+              messages.push(...mailboxMessages);
+              // 更新已找到的UID列表
+              mailboxMessages.forEach(msg => {
+                foundUIDs.add(msg.uid);
+                const index = remainingUIDs.indexOf(msg.uid);
+                if (index > -1) {
+                  remainingUIDs.splice(index, 1);
+                }
+              });
+              console.log(`[GetMessages] Found ${mailboxMessages.length} messages in mailbox: ${mailboxName}`);
+            }
+          } catch (error) {
+            console.error(`[GetMessages] Failed to search in ${mailboxName}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+      }
       
       return {
         content: [
@@ -1279,8 +1323,35 @@ class MailMCPServer {
       throw new Error('uid must be a number');
     }
 
+    const markSeen = args.markSeen || false;
+
     try {
-      const message = await this.imapClient!.getMessage(uid);
+      // 使用现有的多邮箱查找功能
+      const message = await this.findMessageInMultipleMailboxes(uid);
+      
+      if (!message) {
+        throw new Error(`Message with UID ${uid} not found in any mailbox`);
+      }
+      
+      // 如果需要标记为已读，重新获取并标记
+       if (markSeen) {
+         try {
+           const markedMessages = await this.imapClient!.fetchMessages([uid], { markSeen: true });
+           if (markedMessages.length > 0) {
+             return {
+               content: [
+                 {
+                   type: 'text',
+                   text: JSON.stringify(markedMessages[0], null, 2),
+                 },
+               ],
+             };
+           }
+         } catch (error) {
+           // 如果标记失败，返回原始消息
+           console.error(`[GetMessage] Failed to mark message as seen: ${error instanceof Error ? error.message : String(error)}`);
+         }
+       }
       
       return {
         content: [
