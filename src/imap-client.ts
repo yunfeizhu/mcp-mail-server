@@ -63,8 +63,8 @@ export class IMAPClient extends EventEmitter {
         host: this.config.host,
         port: this.config.port,
         tls: this.config.tls || false,
-        connTimeout: this.config.connTimeout || 10000,
-        authTimeout: this.config.authTimeout || 5000,
+        connTimeout: this.config.connTimeout || 60000,
+        authTimeout: this.config.authTimeout || 30000,
         keepalive: this.config.keepalive !== false
       };
 
