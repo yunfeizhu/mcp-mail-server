@@ -177,7 +177,8 @@ class MailMCPServer {
     searchType: string, 
     searchValue: string, 
     startDate: string = '', 
-    endDate: string = ''
+    endDate: string = '',
+    limit?: number
   ): Promise<SearchResult> {
     const mailboxesToSearch = ['INBOX'];
     
@@ -218,8 +219,10 @@ class MailMCPServer {
         let filteredUIDs: number[] = [];
         
         if (uids.length > 0) {
-          console.error(`[IMAP] Auto-fetching content for ${uids.length} messages from ${mailboxName}`);
-          const messages = await this.imapClient!.fetchMessages(uids);
+          // 应用数量限制
+          const limitedUIDs = limit ? uids.slice(0, limit) : uids;
+          console.error(`[IMAP] Auto-fetching content for ${limitedUIDs.length} messages from ${mailboxName}${limit ? ` (limited from ${uids.length})` : ''}`);
+          const messages = await this.imapClient!.fetchMessages(limitedUIDs);
           
           // 为每个邮件添加来源邮箱信息
           let messagesWithMailbox: ExtendedEmailMessage[] = messages.map(msg => ({
@@ -509,6 +512,11 @@ class MailMCPServer {
                 endDate: {
                   type: 'string',
                   description: 'Optional end date/time for filtering. Supports multiple formats: "2025-08-01", "2025-08-01 23:59:59", "01-Aug-2025", or ISO format. Leave empty to not filter by end date.'
+                },
+                limit: {
+                  type: 'number',
+                  description: 'Maximum number of messages to process from each search (default: 10, maximum: 200). Since unreplied emails are typically few, smaller limits are recommended.',
+                  default: 10
                 }
               },
               required: ['sender'],
@@ -1108,6 +1116,7 @@ class MailMCPServer {
     const sender = args.sender;
     const startDate = args.startDate || '';
     const endDate = args.endDate || '';
+    const limit = Math.min(Math.max(args.limit || 10, 1), 200); // 限制在1-200之间
     
     if (!sender) {
       throw new Error('sender parameter is required');
@@ -1122,7 +1131,8 @@ class MailMCPServer {
         'From Sender', 
         sender, 
         startDate, 
-        endDate
+        endDate,
+        limit
       );
       
       // 2. 获取发给该发件人的邮件（已发送的邮件）
@@ -1131,16 +1141,26 @@ class MailMCPServer {
         'To Sender', 
         sender, 
         startDate, 
-        endDate
+        endDate,
+        limit
       );
       
       console.error(`[IMAP] Found ${fromSenderResult.messages.length} messages from sender, ${toSenderResult.messages.length} messages to sender`);
+      
+      // 如果消息太多，提供警告并限制处理数量
+      if (fromSenderResult.messages.length > limit) {
+        console.error(`[IMAP] Warning: Found ${fromSenderResult.messages.length} messages from sender, processing only the latest ${limit}`);
+        fromSenderResult.messages = fromSenderResult.messages
+          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+          .slice(0, limit);
+      }
       
       // 3. 使用改进的算法检测未回复邮件
       const unrepliedMessages = this.detectUnrepliedMessagesAdvanced(
         fromSenderResult.messages, 
         toSenderResult.messages,
-        sender
+        sender,
+        limit // 完全按用户设置，不设上限
       );
       
       console.error(`[IMAP] Found ${unrepliedMessages.length} unreplied messages using advanced detection`);
@@ -1154,7 +1174,7 @@ class MailMCPServer {
         totalMatches: unrepliedMessages.length,
         messages: unrepliedMessages,
         sender: sender,
-        note: `Found ${unrepliedMessages.length} unreplied messages from ${sender} using advanced thread-aware detection.`
+        note: `Found ${unrepliedMessages.length} unreplied messages from ${sender} using advanced thread-aware detection.${limit < 200 ? ` (limited to ${limit} messages per search)` : ''}`
       };
       
       if (startDate) result.startDate = startDate;
@@ -1721,7 +1741,8 @@ class MailMCPServer {
   private detectUnrepliedMessagesAdvanced(
     fromSenderMessages: ExtendedEmailMessage[], 
     toSenderMessages: ExtendedEmailMessage[],
-    senderEmail: string
+    senderEmail: string,
+    maxUnreplied?: number
   ): ExtendedEmailMessage[] {
     const unrepliedMessages: ExtendedEmailMessage[] = [];
     
@@ -1735,12 +1756,28 @@ class MailMCPServer {
     
     console.error(`[IMAP] Analyzing ${sortedFromSender.length} messages from sender and ${sortedToSender.length} messages to sender`);
     
-    for (const fromMessage of sortedFromSender) {
+    // 为避免超时，限制处理数量并显示进度
+    const maxProcessMessages = Math.min(sortedFromSender.length, 100);
+    const messagesToProcess = sortedFromSender.slice(0, maxProcessMessages);
+    
+    if (maxProcessMessages < sortedFromSender.length) {
+      console.error(`[IMAP] Performance optimization: Processing latest ${maxProcessMessages} messages out of ${sortedFromSender.length} total`);
+    }
+    
+    for (let i = 0; i < messagesToProcess.length; i++) {
+      const fromMessage = messagesToProcess[i];
+      
       const isReplied = this.isMessageReplied(fromMessage, sortedToSender, senderEmail);
       
       if (!isReplied) {
         unrepliedMessages.push(fromMessage);
         console.error(`[IMAP] Message UID ${fromMessage.uid} (${fromMessage.subject}) marked as unreplied`);
+        
+        // 如果已经找到足够多的未回复邮件，可以提前退出
+        if (maxUnreplied && unrepliedMessages.length >= maxUnreplied) {
+          console.error(`[IMAP] Early termination: Found ${unrepliedMessages.length} unreplied messages (limit: ${maxUnreplied}), stopping further analysis for performance`);
+          break;
+        }
       } else {
         console.error(`[IMAP] Message UID ${fromMessage.uid} (${fromMessage.subject}) has been replied`);
       }
