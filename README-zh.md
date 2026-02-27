@@ -11,6 +11,7 @@
 
 - **IMAP操作**: 跨邮箱搜索、阅读和管理邮件
 - **SMTP支持**: 发送HTML/文本邮件和附件
+- **附件能力**: 读取附件元数据/内容，并将附件导出到本地文件
 - **安全配置**: 基于环境变量的TLS/SSL设置
 - **AI友好**: 支持自然语言邮件操作命令
 - **自动连接管理**: 自动处理IMAP/SMTP连接
@@ -164,7 +165,11 @@ npm install -g mcp-mail-server
 - `attachments[].contentTruncated`（当附件超过 `attachmentMaxBytes` 时为 true）
 
 ### 邮件发送
-- **send_email**: `to` (字符串), `subject` (字符串), `text` (字符串, 可选), `html` (字符串, 可选), `cc` (字符串, 可选), `bcc` (字符串, 可选)
+- **send_email**: `to` (字符串), `subject` (字符串), `text` (字符串, 可选), `html` (字符串, 可选), `cc` (字符串, 可选), `bcc` (字符串, 可选), `attachments` (数组, 可选)
+  - `attachments[].filename` (字符串, 必填)
+  - `attachments[].content` (字符串, 必填)
+  - `attachments[].contentType` (字符串, 可选)
+  - `attachments[].encoding` ("utf8" \| "base64", 可选, 默认: "utf8")
 - **reply_to_email**: `originalUid` (数字), `text` (字符串), `html` (字符串, 可选), `replyToAll` (布尔值, 可选), `includeOriginal` (布尔值, 可选)
 
 </details>
@@ -186,6 +191,12 @@ npm install -g mcp-mail-server
 - *"显示来自boss@company.com的未回复邮件"*
 - *"显示大于5MB的邮件"*
 - *"获取销售文件夹中的所有邮件"*
+
+### 附件操作
+- *"获取UID为123的邮件，并包含附件内容"*
+- *"获取UID为101和102的邮件，但不包含附件内容"*
+- *"将UID 123 的第一个附件导出到 /tmp/report.pdf"*
+- *"将UID 123 中名为 invoice.pdf 的附件导出到 /tmp/invoice.pdf"*
 
 ### 邮件管理  
 - *"删除UID为123的邮件"*

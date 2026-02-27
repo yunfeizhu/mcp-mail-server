@@ -11,6 +11,7 @@ A Model Context Protocol server for IMAP/SMTP email operations with Claude, Curs
 
 - **IMAP Operations**: Search, read, and manage emails across mailboxes
 - **SMTP Support**: Send emails with HTML/text content and attachments  
+- **Attachment Support**: Read attachment metadata/content and export attachments to local files
 - **Secure Configuration**: Environment-based setup with TLS/SSL support
 - **AI-Friendly**: Natural language commands for email operations
 - **Auto Connection Management**: Automatic IMAP/SMTP connection handling
@@ -164,7 +165,11 @@ Attachment fields returned in message objects:
 - `attachments[].contentTruncated` (true when attachment exceeds `attachmentMaxBytes`)
 
 ### Email Sending
-- **send_email**: `to` (string), `subject` (string), `text` (string, optional), `html` (string, optional), `cc` (string, optional), `bcc` (string, optional)
+- **send_email**: `to` (string), `subject` (string), `text` (string, optional), `html` (string, optional), `cc` (string, optional), `bcc` (string, optional), `attachments` (array, optional)
+  - `attachments[].filename` (string, required)
+  - `attachments[].content` (string, required)
+  - `attachments[].contentType` (string, optional)
+  - `attachments[].encoding` ("utf8" \| "base64", optional, default: "utf8")
 - **reply_to_email**: `originalUid` (number), `text` (string), `html` (string, optional), `replyToAll` (boolean, optional), `includeOriginal` (boolean, optional)
 
 </details>
@@ -186,6 +191,12 @@ Use natural language commands with your AI assistant:
 - *"Show me unreplied emails from boss@company.com"*
 - *"Show me large emails over 5MB"*
 - *"Get all emails from the Sales folder"*
+
+### Attachment Operations
+- *"Get message 123 with attachment content included"*
+- *"Get messages 101 and 102 without attachment content"*
+- *"Export the first attachment of message 123 to /tmp/report.pdf"*
+- *"Export attachment named invoice.pdf from message 123 to /tmp/invoice.pdf"*
 
 ### Email Management  
 - *"Delete the email with UID 123"*
