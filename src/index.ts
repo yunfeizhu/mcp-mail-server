@@ -70,6 +70,14 @@ interface SendEmailArgs {
   html?: string;
   cc?: string;
   bcc?: string;
+  attachments?: SendAttachmentArgs[];
+}
+
+interface SendAttachmentArgs {
+  filename: string;
+  content: string;
+  contentType?: string;
+  encoding?: 'utf8' | 'base64';
 }
 
 interface SearchArgs {
@@ -94,7 +102,7 @@ interface MailboxArgs {
 const COMMON_SENT_MAILBOX_NAMES = ['INBOX.Sent', 'Sent', 'SENT', 'Sent Items', 'Sent Messages', '已发送'] as const;
 const COMMON_MAILBOX_NAMES = ['INBOX', ...COMMON_SENT_MAILBOX_NAMES] as const;
 
-class MailMCPServer {
+export class MailMCPServer {
   private server: Server;
   private imapClient: IMAPClient | null = null;
   private smtpClient: SMTPClient | null = null;
@@ -102,6 +110,45 @@ class MailMCPServer {
 
   private formatError(error: unknown, context: string): string {
     return `${context}: ${error instanceof Error ? error.message : String(error)}`;
+  }
+
+  private parseAttachments(rawAttachments?: SendAttachmentArgs[]): EmailOptions['attachments'] {
+    if (!rawAttachments) {
+      return undefined;
+    }
+    if (!Array.isArray(rawAttachments)) {
+      throw new Error('attachments must be an array');
+    }
+
+    return rawAttachments.map((attachment, index) => {
+      if (!attachment || typeof attachment !== 'object') {
+        throw new Error(`attachments[${index}] must be an object`);
+      }
+      if (!attachment.filename || typeof attachment.filename !== 'string') {
+        throw new Error(`attachments[${index}].filename must be a non-empty string`);
+      }
+      if (typeof attachment.content !== 'string') {
+        throw new Error(`attachments[${index}].content must be a string`);
+      }
+      const normalizedEncoding = attachment.encoding || 'utf8';
+      if (normalizedEncoding !== 'utf8' && normalizedEncoding !== 'base64') {
+        throw new Error(`attachments[${index}].encoding must be either "utf8" or "base64"`);
+      }
+
+      return {
+        filename: attachment.filename,
+        content: attachment.content,
+        contentType: attachment.contentType,
+        encoding: normalizedEncoding,
+      };
+    });
+  }
+
+  private normalizeAttachmentBase64(content: string, encoding: string): string {
+    if (encoding === 'base64') {
+      return content.replace(/\s+/g, '');
+    }
+    return Buffer.from(content, 'utf8').toString('base64');
   }
 
   // 检测是否为仅日期格式（没有时间部分）
@@ -584,6 +631,16 @@ class MailMCPServer {
                   type: 'boolean',
                   description: 'Mark messages as seen when retrieving (default: false)',
                   default: false
+                },
+                includeAttachmentContent: {
+                  type: 'boolean',
+                  description: 'Include attachment content as base64 in each message (default: false)',
+                  default: false
+                },
+                attachmentMaxBytes: {
+                  type: 'number',
+                  description: 'Max attachment bytes to inline when includeAttachmentContent=true (default: 1048576)',
+                  default: 1048576
                 }
               },
               required: ['uids'],
@@ -603,6 +660,16 @@ class MailMCPServer {
                   type: 'boolean',
                   description: 'Mark message as seen when retrieving (default: false)',
                   default: false
+                },
+                includeAttachmentContent: {
+                  type: 'boolean',
+                  description: 'Include attachment content as base64 in response (default: true)',
+                  default: true
+                },
+                attachmentMaxBytes: {
+                  type: 'number',
+                  description: 'Max attachment bytes to inline when includeAttachmentContent=true (default: 1048576)',
+                  default: 1048576
                 }
               },
               required: ['uid'],
@@ -638,6 +705,33 @@ class MailMCPServer {
                 bcc: {
                   type: 'string',
                   description: 'BCC recipients, comma-separated (optional)',
+                },
+                attachments: {
+                  type: 'array',
+                  description: 'Optional attachments. Use content as UTF-8 text by default, or base64 when encoding is "base64".',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      filename: {
+                        type: 'string',
+                        description: 'Attachment filename',
+                      },
+                      content: {
+                        type: 'string',
+                        description: 'Attachment content (UTF-8 text by default, or base64 string when encoding is "base64")',
+                      },
+                      contentType: {
+                        type: 'string',
+                        description: 'MIME content type (optional)',
+                      },
+                      encoding: {
+                        type: 'string',
+                        description: 'Content encoding, either "utf8" or "base64" (default: "utf8")',
+                        enum: ['utf8', 'base64'],
+                      },
+                    },
+                    required: ['filename', 'content'],
+                  },
                 },
               },
               required: ['to', 'subject'],
@@ -1274,6 +1368,8 @@ class MailMCPServer {
     }
 
     const markSeen = args.markSeen || false;
+    const includeAttachmentContent = args.includeAttachmentContent || false;
+    const attachmentMaxBytes = typeof args.attachmentMaxBytes === 'number' ? args.attachmentMaxBytes : 1024 * 1024;
 
     try {
       // 首先尝试在当前邮箱中获取所有邮件
@@ -1283,7 +1379,11 @@ class MailMCPServer {
       // 如果当前有打开的邮箱，先尝试在当前邮箱中查找
       if (this.imapClient!.getCurrentBox()) {
         try {
-          const currentBoxMessages = await this.imapClient!.fetchMessages(uids, { markSeen });
+          const currentBoxMessages = await this.imapClient!.fetchMessages(uids, {
+            markSeen,
+            includeAttachmentContent,
+            attachmentMaxBytes,
+          });
           messages.push(...currentBoxMessages);
           // 记录已找到的UID
           currentBoxMessages.forEach(msg => foundUIDs.add(msg.uid));
@@ -1302,7 +1402,11 @@ class MailMCPServer {
           
           try {
             await this.imapClient!.openBox(mailboxName, true);
-            const mailboxMessages = await this.imapClient!.fetchMessages(remainingUIDs, { markSeen });
+            const mailboxMessages = await this.imapClient!.fetchMessages(remainingUIDs, {
+              markSeen,
+              includeAttachmentContent,
+              attachmentMaxBytes,
+            });
             
             if (mailboxMessages.length > 0) {
               messages.push(...mailboxMessages);
@@ -1344,10 +1448,15 @@ class MailMCPServer {
     }
 
     const markSeen = args.markSeen || false;
+    const includeAttachmentContent = args.includeAttachmentContent !== false;
+    const attachmentMaxBytes = typeof args.attachmentMaxBytes === 'number' ? args.attachmentMaxBytes : 1024 * 1024;
 
     try {
       // 使用现有的多邮箱查找功能
-      const message = await this.findMessageInMultipleMailboxes(uid);
+      const message = await this.findMessageInMultipleMailboxes(uid, {
+        includeAttachmentContent,
+        attachmentMaxBytes,
+      });
       
       if (!message) {
         throw new Error(`Message with UID ${uid} not found in any mailbox`);
@@ -1356,7 +1465,11 @@ class MailMCPServer {
       // 如果需要标记为已读，重新获取并标记
        if (markSeen) {
          try {
-           const markedMessages = await this.imapClient!.fetchMessages([uid], { markSeen: true });
+           const markedMessages = await this.imapClient!.fetchMessages([uid], {
+             markSeen: true,
+             includeAttachmentContent,
+             attachmentMaxBytes,
+           });
            if (markedMessages.length > 0) {
              return {
                content: [
@@ -1538,6 +1651,7 @@ class MailMCPServer {
       html: args.html,
       cc: args.cc ? args.cc.split(',').map((email: string) => email.trim()) : undefined,
       bcc: args.bcc ? args.bcc.split(',').map((email: string) => email.trim()) : undefined,
+      attachments: this.parseAttachments(args.attachments),
     };
 
     if (!emailOptions.text && !emailOptions.html) {
@@ -1907,11 +2021,11 @@ class MailMCPServer {
   }
 
   // 通用方法：在多个邮箱中查找邮件
-  private async findMessageInMultipleMailboxes(uid: number): Promise<EmailMessage | null> {
+  private async findMessageInMultipleMailboxes(uid: number, fetchOptions: any = {}): Promise<EmailMessage | null> {
     // 如果当前有打开的邮箱，先尝试在当前邮箱中查找
     if (this.imapClient!.getCurrentBox()) {
       try {
-        return await this.imapClient!.getMessage(uid);
+        return await this.imapClient!.getMessage(uid, fetchOptions);
       } catch (error) {
         console.error(`[Search] Message not found in current mailbox: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -1921,7 +2035,7 @@ class MailMCPServer {
     for (const mailboxName of COMMON_MAILBOX_NAMES) {
       try {
         await this.imapClient!.openBox(mailboxName, true);
-        const message = await this.imapClient!.getMessage(uid);
+        const message = await this.imapClient!.getMessage(uid, fetchOptions);
         console.error(`[Search] Found message in mailbox: ${mailboxName}`);
         return message;
       } catch (error) {
@@ -2077,22 +2191,29 @@ class MailMCPServer {
     rawMessage += `Subject: ${emailOptions.subject}\r\n`;
     rawMessage += `MIME-Version: 1.0\r\n`;
     
-    // 如果有HTML和文本内容，使用multipart
+    const hasAttachments = !!emailOptions.attachments && emailOptions.attachments.length > 0;
+    const mixedBoundary = `----=_Mixed_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const altBoundary = `----=_Alt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+    if (hasAttachments) {
+      rawMessage += `Content-Type: multipart/mixed; boundary="${mixedBoundary}"\r\n\r\n`;
+      rawMessage += `--${mixedBoundary}\r\n`;
+    }
+
     if (emailOptions.html && emailOptions.text) {
-      const boundary = `----=_Part_${Date.now()}_${Math.random().toString(36)}`;
-      rawMessage += `Content-Type: multipart/alternative; boundary="${boundary}"\r\n\r\n`;
-      
-      rawMessage += `--${boundary}\r\n`;
+      rawMessage += `Content-Type: multipart/alternative; boundary="${altBoundary}"\r\n\r\n`;
+
+      rawMessage += `--${altBoundary}\r\n`;
       rawMessage += `Content-Type: text/plain; charset=utf-8\r\n`;
       rawMessage += `Content-Transfer-Encoding: 8bit\r\n\r\n`;
       rawMessage += `${emailOptions.text}\r\n\r\n`;
-      
-      rawMessage += `--${boundary}\r\n`;
+
+      rawMessage += `--${altBoundary}\r\n`;
       rawMessage += `Content-Type: text/html; charset=utf-8\r\n`;
       rawMessage += `Content-Transfer-Encoding: 8bit\r\n\r\n`;
       rawMessage += `${emailOptions.html}\r\n\r\n`;
-      
-      rawMessage += `--${boundary}--\r\n`;
+
+      rawMessage += `--${altBoundary}--\r\n`;
     } else if (emailOptions.html) {
       rawMessage += `Content-Type: text/html; charset=utf-8\r\n`;
       rawMessage += `Content-Transfer-Encoding: 8bit\r\n\r\n`;
@@ -2101,6 +2222,21 @@ class MailMCPServer {
       rawMessage += `Content-Type: text/plain; charset=utf-8\r\n`;
       rawMessage += `Content-Transfer-Encoding: 8bit\r\n\r\n`;
       rawMessage += `${emailOptions.text || ''}\r\n`;
+    }
+
+    if (hasAttachments && emailOptions.attachments) {
+      for (const attachment of emailOptions.attachments) {
+        const base64Content = this.normalizeAttachmentBase64(
+          String(attachment.content),
+          attachment.encoding || 'utf8'
+        );
+        rawMessage += `\r\n--${mixedBoundary}\r\n`;
+        rawMessage += `Content-Type: ${attachment.contentType || 'application/octet-stream'}; name="${attachment.filename}"\r\n`;
+        rawMessage += `Content-Transfer-Encoding: base64\r\n`;
+        rawMessage += `Content-Disposition: attachment; filename="${attachment.filename}"\r\n\r\n`;
+        rawMessage += `${base64Content}\r\n`;
+      }
+      rawMessage += `--${mixedBoundary}--\r\n`;
     }
     
     return rawMessage;
@@ -2126,5 +2262,7 @@ class MailMCPServer {
   }
 }
 
-const server = new MailMCPServer();
-server.run().catch(console.error);
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const server = new MailMCPServer();
+  server.run().catch(console.error);
+}

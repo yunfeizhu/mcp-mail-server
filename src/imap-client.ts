@@ -27,6 +27,19 @@ export interface EmailMessage {
   bcc?: string;
   text?: string;
   html?: string;
+  attachments?: EmailAttachment[];
+}
+
+export interface EmailAttachment {
+  filename: string;
+  contentType?: string;
+  size: number;
+  checksum?: string;
+  contentId?: string;
+  contentDisposition?: string;
+  transferEncoding?: string;
+  contentBase64?: string;
+  contentTruncated?: boolean;
 }
 
 export interface MailboxInfo {
@@ -189,6 +202,9 @@ export class IMAPClient extends EventEmitter {
       await this.openBox('INBOX', true);
     }
 
+    const includeAttachmentContent = options.includeAttachmentContent || false;
+    const attachmentMaxBytes = Number.isFinite(options.attachmentMaxBytes) ? Number(options.attachmentMaxBytes) : 1024 * 1024;
+
     const fetchOptions = {
       bodies: options.bodies || ['HEADER', 'TEXT'],
       struct: options.struct !== false,
@@ -334,7 +350,22 @@ export class IMAPClient extends EventEmitter {
               cc: extractEmailAddress(parsedMail.cc) || undefined,
               bcc: extractEmailAddress(parsedMail.bcc) || undefined,
               text: parsedMail.text,
-              html: parsedMail.html
+              html: parsedMail.html,
+              attachments: (parsedMail.attachments || []).map((attachment: any) => {
+                const contentBuffer = attachment.content;
+                const shouldIncludeContent = includeAttachmentContent && Buffer.isBuffer(contentBuffer) && contentBuffer.length <= attachmentMaxBytes;
+                return {
+                  filename: attachment.filename || 'unnamed-attachment',
+                  contentType: attachment.contentType,
+                  size: attachment.size || (Buffer.isBuffer(contentBuffer) ? contentBuffer.length : 0),
+                  checksum: attachment.checksum,
+                  contentId: attachment.cid,
+                  contentDisposition: attachment.contentDisposition,
+                  transferEncoding: attachment.transferEncoding,
+                  contentBase64: shouldIncludeContent ? contentBuffer.toString('base64') : undefined,
+                  contentTruncated: includeAttachmentContent && Buffer.isBuffer(contentBuffer) ? contentBuffer.length > attachmentMaxBytes : false,
+                } as EmailAttachment;
+              })
             } as EmailMessage);
           } catch (error) {
             console.error(`[IMAP] Failed to parse message ${seqno}:`, error);
@@ -357,8 +388,8 @@ export class IMAPClient extends EventEmitter {
     });
   }
 
-  async getMessage(uid: number): Promise<EmailMessage> {
-    const messages = await this.fetchMessages([uid]);
+  async getMessage(uid: number, options: any = {}): Promise<EmailMessage> {
+    const messages = await this.fetchMessages([uid], options);
     if (messages.length === 0) {
       throw new Error(`Message with UID ${uid} not found`);
     }

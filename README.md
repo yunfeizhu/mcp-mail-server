@@ -150,9 +150,16 @@ Then configure with:
 - **search_larger_than**: `size` (number, bytes)
 
 ### Message Operations
-- **get_message**: `uid` (number), `markSeen` (boolean, optional)
-- **get_messages**: `uids` (array), `markSeen` (boolean, optional)
+- **get_message**: `uid` (number), `markSeen` (boolean, optional), `includeAttachmentContent` (boolean, optional, default: true), `attachmentMaxBytes` (number, optional)
+- **get_messages**: `uids` (array), `markSeen` (boolean, optional), `includeAttachmentContent` (boolean, optional, default: false), `attachmentMaxBytes` (number, optional)
 - **delete_message**: `uid` (number)
+
+Attachment fields returned in message objects:
+- `attachments[].filename`
+- `attachments[].contentType`
+- `attachments[].size`
+- `attachments[].contentBase64` (only when `includeAttachmentContent=true` and within size limit)
+- `attachments[].contentTruncated` (true when attachment exceeds `attachmentMaxBytes`)
 
 ### Email Sending
 - **send_email**: `to` (string), `subject` (string), `text` (string, optional), `html` (string, optional), `cc` (string, optional), `bcc` (string, optional)
@@ -297,4 +304,3 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - Node.js: ≥18.0.0
 - Repository: [GitHub](https://github.com/yunfeizhu/mcp-mail-server)
 - Issues: [Report bugs](https://github.com/yunfeizhu/mcp-mail-server/issues)
-

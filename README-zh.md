@@ -150,9 +150,16 @@ npm install -g mcp-mail-server
 - **search_larger_than**: `size` (数字, 字节数)
 
 ### 邮件操作
-- **get_message**: `uid` (数字), `markSeen` (布尔值, 可选)
-- **get_messages**: `uids` (数组), `markSeen` (布尔值, 可选)
+- **get_message**: `uid` (数字), `markSeen` (布尔值, 可选), `includeAttachmentContent` (布尔值, 可选, 默认: true), `attachmentMaxBytes` (数字, 可选)
+- **get_messages**: `uids` (数组), `markSeen` (布尔值, 可选), `includeAttachmentContent` (布尔值, 可选, 默认: false), `attachmentMaxBytes` (数字, 可选)
 - **delete_message**: `uid` (数字)
+
+邮件对象中的附件字段：
+- `attachments[].filename`
+- `attachments[].contentType`
+- `attachments[].size`
+- `attachments[].contentBase64`（仅当 `includeAttachmentContent=true` 且附件大小在限制内返回）
+- `attachments[].contentTruncated`（当附件超过 `attachmentMaxBytes` 时为 true）
 
 ### 邮件发送
 - **send_email**: `to` (字符串), `subject` (字符串), `text` (字符串, 可选), `html` (字符串, 可选), `cc` (字符串, 可选), `bcc` (字符串, 可选)
