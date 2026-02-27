@@ -122,6 +122,7 @@ npm install -g mcp-mail-server
 | `search_larger_than` | 按大小搜索邮件 |
 | `get_message` | 通过UID获取邮件 |
 | `get_messages` | 获取多个邮件 |
+| `export_attachment` | 导出附件到本地文件 |
 | `delete_message` | 通过UID删除邮件 |
 | `get_unseen_messages` | 获取所有未读邮件 |
 | `get_recent_messages` | 获取最近邮件 |
@@ -152,6 +153,7 @@ npm install -g mcp-mail-server
 ### 邮件操作
 - **get_message**: `uid` (数字), `markSeen` (布尔值, 可选), `includeAttachmentContent` (布尔值, 可选, 默认: true), `attachmentMaxBytes` (数字, 可选)
 - **get_messages**: `uids` (数组), `markSeen` (布尔值, 可选), `includeAttachmentContent` (布尔值, 可选, 默认: false), `attachmentMaxBytes` (数字, 可选)
+- **export_attachment**: `uid` (数字), `filePath` (字符串), `attachmentIndex` (数字, 可选, 默认: 0), `filename` (字符串, 可选)
 - **delete_message**: `uid` (数字)
 
 邮件对象中的附件字段：

@@ -122,6 +122,7 @@ Then configure with:
 | `search_larger_than` | Find emails by size |
 | `get_message` | Retrieve email by UID |
 | `get_messages` | Retrieve multiple emails |
+| `export_attachment` | Export attachment to local file |
 | `delete_message` | Delete email by UID |
 | `get_unseen_messages` | Get all unread emails |
 | `get_recent_messages` | Get recent emails |
@@ -152,6 +153,7 @@ Then configure with:
 ### Message Operations
 - **get_message**: `uid` (number), `markSeen` (boolean, optional), `includeAttachmentContent` (boolean, optional, default: true), `attachmentMaxBytes` (number, optional)
 - **get_messages**: `uids` (array), `markSeen` (boolean, optional), `includeAttachmentContent` (boolean, optional, default: false), `attachmentMaxBytes` (number, optional)
+- **export_attachment**: `uid` (number), `filePath` (string), `attachmentIndex` (number, optional, default: 0), `filename` (string, optional)
 - **delete_message**: `uid` (number)
 
 Attachment fields returned in message objects:

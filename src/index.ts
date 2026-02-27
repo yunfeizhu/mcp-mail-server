@@ -8,6 +8,8 @@ import {
 import { IMAPClient, IMAPConfig, EmailMessage } from './imap-client.js';
 import { SMTPClient, SMTPConfig, EmailOptions } from './smtp-client.js';
 import { EMAIL_CONFIG } from './config.js';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 
 // 扩展的邮件类型，包含额外信息
 interface ExtendedEmailMessage extends EmailMessage {
@@ -78,6 +80,13 @@ interface SendAttachmentArgs {
   content: string;
   contentType?: string;
   encoding?: 'utf8' | 'base64';
+}
+
+interface ExportAttachmentArgs {
+  uid: number;
+  filePath: string;
+  attachmentIndex?: number;
+  filename?: string;
 }
 
 interface SearchArgs {
@@ -675,6 +684,33 @@ export class MailMCPServer {
               required: ['uid'],
             },
           },
+          {
+            name: 'export_attachment',
+            description: 'Export one attachment from a message to local file path.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                uid: {
+                  type: 'number',
+                  description: 'Message UID to export attachment from',
+                },
+                filePath: {
+                  type: 'string',
+                  description: 'Target local file path for exported attachment',
+                },
+                attachmentIndex: {
+                  type: 'number',
+                  description: 'Attachment index in attachments array (default: 0)',
+                  default: 0
+                },
+                filename: {
+                  type: 'string',
+                  description: 'Optional attachment filename to select by name (takes precedence over attachmentIndex)',
+                },
+              },
+              required: ['uid', 'filePath'],
+            },
+          },
           // === 邮件发送 ===
           {
             name: 'send_email',
@@ -834,6 +870,8 @@ export class MailMCPServer {
             return await this.handleGetMessages(args);
           case 'get_message':
             return await this.handleGetMessage(args);
+          case 'export_attachment':
+            return await this.handleExportAttachment(args as unknown as ExportAttachmentArgs);
           case 'delete_message':
             return await this.handleDeleteMessage(args);
           case 'get_message_count':
@@ -1497,6 +1535,75 @@ export class MailMCPServer {
     } catch (error) {
       throw new Error(this.formatError(error, 'Failed to get message'));
     }
+  }
+
+  private async handleExportAttachment(args: ExportAttachmentArgs) {
+    await this.ensureRequiredConnections(true, false);
+
+    const uid = args.uid;
+    if (typeof uid !== 'number') {
+      throw new Error('uid must be a number');
+    }
+    if (!args.filePath || typeof args.filePath !== 'string') {
+      throw new Error('filePath is required and must be a string');
+    }
+
+    const attachmentIndex = typeof args.attachmentIndex === 'number' ? args.attachmentIndex : 0;
+    if (attachmentIndex < 0) {
+      throw new Error('attachmentIndex must be >= 0');
+    }
+
+    const message = await this.findMessageInMultipleMailboxes(uid, {
+      includeAttachmentContent: true,
+      attachmentMaxBytes: Number.MAX_SAFE_INTEGER,
+    });
+    if (!message) {
+      throw new Error(`Message with UID ${uid} not found in any mailbox`);
+    }
+
+    const attachments = message.attachments || [];
+    if (attachments.length === 0) {
+      throw new Error(`Message ${uid} has no attachments`);
+    }
+
+    const attachment = args.filename
+      ? attachments.find(item => item.filename === args.filename)
+      : attachments[attachmentIndex];
+
+    if (!attachment) {
+      if (args.filename) {
+        throw new Error(`Attachment "${args.filename}" not found in message ${uid}`);
+      }
+      throw new Error(`Attachment index ${attachmentIndex} out of range, total attachments: ${attachments.length}`);
+    }
+
+    if (!attachment.contentBase64) {
+      throw new Error(`Attachment "${attachment.filename}" content is unavailable`);
+    }
+
+    const outputPath = path.resolve(process.cwd(), args.filePath);
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    const fileBuffer = Buffer.from(attachment.contentBase64, 'base64');
+    await fs.writeFile(outputPath, fileBuffer);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            uid,
+            attachment: {
+              filename: attachment.filename,
+              contentType: attachment.contentType,
+              size: attachment.size,
+            },
+            outputPath,
+            bytesWritten: fileBuffer.length,
+          }, null, 2),
+        },
+      ],
+    };
   }
 
   private async handleDeleteMessage(args: any) {
