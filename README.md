@@ -11,6 +11,7 @@ A Model Context Protocol server for IMAP/SMTP email operations with Claude, Curs
 
 - **IMAP Operations**: Search, read, and manage emails across mailboxes
 - **SMTP Support**: Send emails with HTML/text content and attachments  
+- **Attachment Support**: Read attachment metadata/content and export attachments to local files
 - **Secure Configuration**: Environment-based setup with TLS/SSL support
 - **AI-Friendly**: Natural language commands for email operations
 - **Auto Connection Management**: Automatic IMAP/SMTP connection handling
@@ -122,6 +123,7 @@ Then configure with:
 | `search_larger_than` | Find emails by size |
 | `get_message` | Retrieve email by UID |
 | `get_messages` | Retrieve multiple emails |
+| `export_attachment` | Export attachment to local file |
 | `delete_message` | Delete email by UID |
 | `get_unseen_messages` | Get all unread emails |
 | `get_recent_messages` | Get recent emails |
@@ -150,12 +152,24 @@ Then configure with:
 - **search_larger_than**: `size` (number, bytes)
 
 ### Message Operations
-- **get_message**: `uid` (number), `markSeen` (boolean, optional)
-- **get_messages**: `uids` (array), `markSeen` (boolean, optional)
+- **get_message**: `uid` (number), `markSeen` (boolean, optional), `includeAttachmentContent` (boolean, optional, default: true), `attachmentMaxBytes` (number, optional)
+- **get_messages**: `uids` (array), `markSeen` (boolean, optional), `includeAttachmentContent` (boolean, optional, default: false), `attachmentMaxBytes` (number, optional)
+- **export_attachment**: `uid` (number), `filePath` (string), `attachmentIndex` (number, optional, default: 0), `filename` (string, optional)
 - **delete_message**: `uid` (number)
 
+Attachment fields returned in message objects:
+- `attachments[].filename`
+- `attachments[].contentType`
+- `attachments[].size`
+- `attachments[].contentBase64` (only when `includeAttachmentContent=true` and within size limit)
+- `attachments[].contentTruncated` (true when attachment exceeds `attachmentMaxBytes`)
+
 ### Email Sending
-- **send_email**: `to` (string), `subject` (string), `text` (string, optional), `html` (string, optional), `cc` (string, optional), `bcc` (string, optional)
+- **send_email**: `to` (string), `subject` (string), `text` (string, optional), `html` (string, optional), `cc` (string, optional), `bcc` (string, optional), `attachments` (array, optional)
+  - `attachments[].filename` (string, required)
+  - `attachments[].content` (string, required)
+  - `attachments[].contentType` (string, optional)
+  - `attachments[].encoding` ("utf8" \| "base64", optional, default: "utf8")
 - **reply_to_email**: `originalUid` (number), `text` (string), `html` (string, optional), `replyToAll` (boolean, optional), `includeOriginal` (boolean, optional)
 
 </details>
@@ -177,6 +191,12 @@ Use natural language commands with your AI assistant:
 - *"Show me unreplied emails from boss@company.com"*
 - *"Show me large emails over 5MB"*
 - *"Get all emails from the Sales folder"*
+
+### Attachment Operations
+- *"Get message 123 with attachment content included"*
+- *"Get messages 101 and 102 without attachment content"*
+- *"Export the first attachment of message 123 to /tmp/report.pdf"*
+- *"Export attachment named invoice.pdf from message 123 to /tmp/invoice.pdf"*
 
 ### Email Management  
 - *"Delete the email with UID 123"*
@@ -297,4 +317,3 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - Node.js: ≥18.0.0
 - Repository: [GitHub](https://github.com/yunfeizhu/mcp-mail-server)
 - Issues: [Report bugs](https://github.com/yunfeizhu/mcp-mail-server/issues)
-
