@@ -1,4 +1,4 @@
-# Mail MCP Server
+# Mcp Mail Server
 
 <!-- mcp-name: mcp-mail-server -->
 
@@ -9,9 +9,6 @@
 
 A Model Context Protocol (MCP) server that provides email capabilities through IMAP and SMTP protocols. This server enables LLMs to search, read, manage, and send emails on behalf of users.
 
-> [!NOTE]
-> This server requires access to your email account credentials. Use **app-specific passwords** whenever possible, and never hardcode credentials. Exercise caution to ensure your email data is handled securely.
-
 ### Features
 
 - Read/search/delete emails via IMAP
@@ -20,135 +17,6 @@ A Model Context Protocol (MCP) server that provides email capabilities through I
 - Multi-mailbox support (INBOX, Sent, custom folders)
 - Automatic IMAP/SMTP connection management
 - Secure TLS/SSL connections
-
-### Tools
-
-- **connect_all**
-  - Connect to both IMAP and SMTP servers
-  - No parameters required
-
-- **get_connection_status**
-  - Check current connection status and server info
-  - No parameters required
-
-- **disconnect_all**
-  - Disconnect from all email servers
-  - No parameters required
-
-- **open_mailbox**
-  - Open a specific mailbox/folder
-  - Inputs:
-    - `mailboxName` (string, optional): Folder name (default: "INBOX")
-    - `readOnly` (boolean, optional): Open in read-only mode
-
-- **list_mailboxes**
-  - List all available mail folders
-  - No parameters required
-
-- **search_messages**
-  - Search emails using IMAP search criteria
-  - Inputs:
-    - `criteria` (array): IMAP search criteria
-
-- **search_by_sender**
-  - Find emails from a specific sender
-  - Inputs:
-    - `sender` (string): Email address of sender
-
-- **search_by_subject**
-  - Search emails by subject keywords
-  - Inputs:
-    - `subject` (string): Subject keywords
-
-- **search_by_body**
-  - Search within email message content
-  - Inputs:
-    - `text` (string): Search text
-
-- **search_since_date**
-  - Find emails since a specific date
-  - Inputs:
-    - `date` (string): Date string
-
-- **search_unreplied_from_sender**
-  - Find unreplied emails from a specific sender
-  - Inputs:
-    - `sender` (string): Email address
-    - `startDate` (string, optional): Start date filter
-    - `endDate` (string, optional): End date filter
-
-- **search_larger_than**
-  - Find emails larger than a specific size
-  - Inputs:
-    - `size` (number): Size threshold in bytes
-
-- **get_message**
-  - Retrieve a single email by UID
-  - Inputs:
-    - `uid` (number): Email UID
-    - `markSeen` (boolean, optional): Mark as read
-    - `includeAttachmentContent` (boolean, optional): Include attachment data (default: true)
-    - `attachmentMaxBytes` (number, optional): Max attachment size to include
-
-- **get_messages**
-  - Retrieve multiple emails by UIDs
-  - Inputs:
-    - `uids` (number[]): Array of email UIDs
-    - `markSeen` (boolean, optional): Mark as read
-    - `includeAttachmentContent` (boolean, optional): Include attachment data (default: false)
-    - `attachmentMaxBytes` (number, optional): Max attachment size to include
-
-  Attachment fields returned in message objects:
-  - `attachments[].filename`
-  - `attachments[].contentType`
-  - `attachments[].size`
-  - `attachments[].contentBase64` (only when `includeAttachmentContent=true` and within size limit)
-  - `attachments[].contentTruncated` (true when attachment exceeds `attachmentMaxBytes`)
-
-- **export_attachment**
-  - Export an email attachment to a local file
-  - Inputs:
-    - `uid` (number): Email UID
-    - `filePath` (string): Destination file path
-    - `attachmentIndex` (number, optional): Attachment index (default: 0)
-    - `filename` (string, optional): Match attachment by filename
-
-- **delete_message**
-  - Delete an email by UID
-  - Inputs:
-    - `uid` (number): Email UID
-
-- **get_unseen_messages**
-  - Get all unread emails
-  - No parameters required
-
-- **get_recent_messages**
-  - Get recently received emails
-  - No parameters required
-
-- **send_email**
-  - Send an email via SMTP
-  - Inputs:
-    - `to` (string, required): Recipient email address
-    - `subject` (string, required): Email subject
-    - `text` (string, optional): Plain text body
-    - `html` (string, optional): HTML body
-    - `cc` (string, optional): CC recipients
-    - `bcc` (string, optional): BCC recipients
-    - `attachments` (array, optional): File attachments
-      - `filename` (string, required): Attachment filename
-      - `content` (string, required): File content
-      - `contentType` (string, optional): MIME type
-      - `encoding` ("utf8" | "base64", optional): Content encoding (default: "utf8")
-
-- **reply_to_email**
-  - Reply to a specific email
-  - Inputs:
-    - `originalUid` (number, required): UID of the email to reply to
-    - `text` (string, required): Reply text body
-    - `html` (string, optional): Reply HTML body
-    - `replyToAll` (boolean, optional): Reply to all recipients
-    - `includeOriginal` (boolean, optional): Include original message
 
 ## Installation
 
@@ -373,6 +241,60 @@ npm install -g mcp-mail-server
 ```
 
 </details>
+
+## Tools
+
+### Connection Management
+
+| Tool                    | Description                                     |
+| ----------------------- | ----------------------------------------------- |
+| `connect_all`           | Connect to both IMAP and SMTP servers           |
+| `get_connection_status` | Check current connection status and server info |
+| `disconnect_all`        | Disconnect from all email servers               |
+
+### Mailbox Management
+
+| Tool             | Description                     | Parameters                                                       |
+| ---------------- | ------------------------------- | ---------------------------------------------------------------- |
+| `open_mailbox`   | Open a specific mailbox/folder  | `mailboxName` (optional, default "INBOX"), `readOnly` (optional) |
+| `list_mailboxes` | List all available mail folders | —                                                                |
+
+### Email Search
+
+| Tool                           | Description                                  | Parameters                                             |
+| ------------------------------ | -------------------------------------------- | ------------------------------------------------------ |
+| `search_messages`              | Search emails using IMAP search criteria     | `criteria` (array)                                     |
+| `search_by_sender`             | Find emails from a specific sender           | `sender`                                               |
+| `search_by_subject`            | Search emails by subject keywords            | `subject`                                              |
+| `search_by_body`               | Search within email message content          | `text`                                                 |
+| `search_since_date`            | Find emails since a specific date            | `date`                                                 |
+| `search_unreplied_from_sender` | Find unreplied emails from a specific sender | `sender`, `startDate` (optional), `endDate` (optional) |
+| `search_larger_than`           | Find emails larger than a specific size      | `size` (bytes)                                         |
+
+### Email Reading
+
+| Tool                  | Description                      | Parameters                                                                                                                     |
+| --------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `get_message`         | Retrieve a single email by UID   | `uid`, `markSeen` (optional), `includeAttachmentContent` (optional, default `true`), `attachmentMaxBytes` (optional)           |
+| `get_messages`        | Retrieve multiple emails by UIDs | `uids` (array), `markSeen` (optional), `includeAttachmentContent` (optional, default `false`), `attachmentMaxBytes` (optional) |
+| `get_unseen_messages` | Get all unread emails            | —                                                                                                                              |
+| `get_recent_messages` | Get recently received emails     | —                                                                                                                              |
+
+> Attachment fields in message objects: `filename`, `contentType`, `size`, `contentBase64` (only when `includeAttachmentContent=true` and within size limit), `contentTruncated` (true when exceeds `attachmentMaxBytes`)
+
+### Attachment & Message Management
+
+| Tool                | Description                                | Parameters                                                                          |
+| ------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `export_attachment` | Export an email attachment to a local file | `uid`, `filePath`, `attachmentIndex` (optional, default `0`), `filename` (optional) |
+| `delete_message`    | Delete an email by UID                     | `uid`                                                                               |
+
+### Sending & Replying
+
+| Tool             | Description               | Parameters                                                                                                         |
+| ---------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `send_email`     | Send an email via SMTP    | `to`, `subject`, `text` (optional), `html` (optional), `cc` (optional), `bcc` (optional), `attachments` (optional) |
+| `reply_to_email` | Reply to a specific email | `originalUid`, `text`, `html` (optional), `replyToAll` (optional), `includeOriginal` (optional)                    |
 
 ## Usage Examples
 
