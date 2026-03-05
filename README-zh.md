@@ -1,4 +1,4 @@
-# Mail MCP Server
+# Mcp Mail Server
 
 <!-- mcp-name: mcp-mail-server -->
 
@@ -9,9 +9,6 @@
 
 一个基于模型上下文协议（MCP）的邮件服务器，通过 IMAP 和 SMTP 协议提供邮件操作能力。该服务器使 LLM 能够代替用户搜索、阅读、管理和发送电子邮件。
 
-> [!NOTE]
-> 此服务器需要访问您的邮箱账户凭据。请尽可能使用**应用专用密码**，切勿硬编码凭据。请谨慎操作以确保邮件数据安全。
-
 ### 功能特性
 
 - 通过 IMAP 读取/搜索/删除邮件
@@ -20,135 +17,6 @@
 - 多邮箱支持（收件箱、已发送、自定义文件夹）
 - 自动管理 IMAP/SMTP 连接
 - 安全的 TLS/SSL 连接
-
-### 工具列表
-
-- **connect_all**
-  - 同时连接 IMAP 和 SMTP 服务器
-  - 无需参数
-
-- **get_connection_status**
-  - 检查当前连接状态和服务器信息
-  - 无需参数
-
-- **disconnect_all**
-  - 断开所有邮件服务器连接
-  - 无需参数
-
-- **open_mailbox**
-  - 打开指定的邮箱/文件夹
-  - 参数：
-    - `mailboxName`（字符串，可选）：文件夹名称（默认："INBOX"）
-    - `readOnly`（布尔值，可选）：以只读模式打开
-
-- **list_mailboxes**
-  - 列出所有可用的邮件文件夹
-  - 无需参数
-
-- **search_messages**
-  - 使用 IMAP 搜索条件搜索邮件
-  - 参数：
-    - `criteria`（数组）：IMAP 搜索条件
-
-- **search_by_sender**
-  - 按发件人搜索邮件
-  - 参数：
-    - `sender`（字符串）：发件人邮箱地址
-
-- **search_by_subject**
-  - 按主题关键词搜索邮件
-  - 参数：
-    - `subject`（字符串）：主题关键词
-
-- **search_by_body**
-  - 搜索邮件正文内容
-  - 参数：
-    - `text`（字符串）：搜索文本
-
-- **search_since_date**
-  - 搜索指定日期之后的邮件
-  - 参数：
-    - `date`（字符串）：日期字符串
-
-- **search_unreplied_from_sender**
-  - 查找来自特定发件人的未回复邮件
-  - 参数：
-    - `sender`（字符串）：邮箱地址
-    - `startDate`（字符串，可选）：开始日期
-    - `endDate`（字符串，可选）：结束日期
-
-- **search_larger_than**
-  - 查找大于指定大小的邮件
-  - 参数：
-    - `size`（数字）：大小阈值（字节）
-
-- **get_message**
-  - 通过 UID 获取单封邮件
-  - 参数：
-    - `uid`（数字）：邮件 UID
-    - `markSeen`（布尔值，可选）：标记为已读
-    - `includeAttachmentContent`（布尔值，可选）：包含附件数据（默认：true）
-    - `attachmentMaxBytes`（数字，可选）：附件最大字节数
-
-- **get_messages**
-  - 通过 UID 批量获取邮件
-  - 参数：
-    - `uids`（数字数组）：邮件 UID 数组
-    - `markSeen`（布尔值，可选）：标记为已读
-    - `includeAttachmentContent`（布尔值，可选）：包含附件数据（默认：false）
-    - `attachmentMaxBytes`（数字，可选）：附件最大字节数
-
-  邮件对象中的附件字段：
-  - `attachments[].filename`
-  - `attachments[].contentType`
-  - `attachments[].size`
-  - `attachments[].contentBase64`（仅当 `includeAttachmentContent=true` 且附件大小在限制内时返回）
-  - `attachments[].contentTruncated`（当附件超过 `attachmentMaxBytes` 时为 `true`）
-
-- **export_attachment**
-  - 将邮件附件导出到本地文件
-  - 参数：
-    - `uid`（数字）：邮件 UID
-    - `filePath`（字符串）：目标文件路径
-    - `attachmentIndex`（数字，可选）：附件索引（默认：0）
-    - `filename`（字符串，可选）：按文件名匹配附件
-
-- **delete_message**
-  - 通过 UID 删除邮件
-  - 参数：
-    - `uid`（数字）：邮件 UID
-
-- **get_unseen_messages**
-  - 获取所有未读邮件
-  - 无需参数
-
-- **get_recent_messages**
-  - 获取最近收到的邮件
-  - 无需参数
-
-- **send_email**
-  - 通过 SMTP 发送邮件
-  - 参数：
-    - `to`（字符串，必填）：收件人邮箱地址
-    - `subject`（字符串，必填）：邮件主题
-    - `text`（字符串，可选）：纯文本正文
-    - `html`（字符串，可选）：HTML 正文
-    - `cc`（字符串，可选）：抄送
-    - `bcc`（字符串，可选）：密送
-    - `attachments`（数组，可选）：附件列表
-      - `filename`（字符串，必填）：附件文件名
-      - `content`（字符串，必填）：文件内容
-      - `contentType`（字符串，可选）：MIME 类型
-      - `encoding`（"utf8" | "base64"，可选）：内容编码（默认："utf8"）
-
-- **reply_to_email**
-  - 回复指定邮件
-  - 参数：
-    - `originalUid`（数字，必填）：要回复的邮件 UID
-    - `text`（字符串，必填）：回复文本内容
-    - `html`（字符串，可选）：回复 HTML 内容
-    - `replyToAll`（布尔值，可选）：回复所有收件人
-    - `includeOriginal`（布尔值，可选）：引用原始邮件
 
 ## 安装
 
@@ -373,6 +241,60 @@ npm install -g mcp-mail-server
 ```
 
 </details>
+
+## 工具列表
+
+### 连接管理
+
+| 工具                    | 说明                         |
+| ----------------------- | ---------------------------- |
+| `connect_all`           | 同时连接 IMAP 和 SMTP 服务器 |
+| `get_connection_status` | 检查当前连接状态和服务器信息 |
+| `disconnect_all`        | 断开所有邮件服务器连接       |
+
+### 邮箱管理
+
+| 工具             | 说明                     | 参数                                                    |
+| ---------------- | ------------------------ | ------------------------------------------------------- |
+| `open_mailbox`   | 打开指定的邮箱/文件夹    | `mailboxName`（可选，默认 "INBOX"）、`readOnly`（可选） |
+| `list_mailboxes` | 列出所有可用的邮件文件夹 | —                                                       |
+
+### 邮件搜索
+
+| 工具                           | 说明                           | 参数                                             |
+| ------------------------------ | ------------------------------ | ------------------------------------------------ |
+| `search_messages`              | 使用 IMAP 搜索条件搜索邮件     | `criteria`（数组）                               |
+| `search_by_sender`             | 按发件人搜索邮件               | `sender`                                         |
+| `search_by_subject`            | 按主题关键词搜索邮件           | `subject`                                        |
+| `search_by_body`               | 搜索邮件正文内容               | `text`                                           |
+| `search_since_date`            | 搜索指定日期之后的邮件         | `date`                                           |
+| `search_unreplied_from_sender` | 查找来自特定发件人的未回复邮件 | `sender`、`startDate`（可选）、`endDate`（可选） |
+| `search_larger_than`           | 查找大于指定大小的邮件         | `size`（字节）                                   |
+
+### 邮件读取
+
+| 工具                  | 说明                  | 参数                                                                                                               |
+| --------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `get_message`         | 通过 UID 获取单封邮件 | `uid`、`markSeen`（可选）、`includeAttachmentContent`（可选，默认 `true`）、`attachmentMaxBytes`（可选）           |
+| `get_messages`        | 通过 UID 批量获取邮件 | `uids`（数组）、`markSeen`（可选）、`includeAttachmentContent`（可选，默认 `false`）、`attachmentMaxBytes`（可选） |
+| `get_unseen_messages` | 获取所有未读邮件      | —                                                                                                                  |
+| `get_recent_messages` | 获取最近收到的邮件    | —                                                                                                                  |
+
+> 邮件对象中的附件字段：`filename`、`contentType`、`size`、`contentBase64`（仅当 `includeAttachmentContent=true` 且在大小限制内时）、`contentTruncated`（超限时为 `true`）
+
+### 附件与邮件管理
+
+| 工具                | 说明                     | 参数                                                                       |
+| ------------------- | ------------------------ | -------------------------------------------------------------------------- |
+| `export_attachment` | 将邮件附件导出到本地文件 | `uid`、`filePath`、`attachmentIndex`（可选，默认 `0`）、`filename`（可选） |
+| `delete_message`    | 通过 UID 删除邮件        | `uid`                                                                      |
+
+### 发送与回复
+
+| 工具             | 说明               | 参数                                                                                                |
+| ---------------- | ------------------ | --------------------------------------------------------------------------------------------------- |
+| `send_email`     | 通过 SMTP 发送邮件 | `to`、`subject`、`text`（可选）、`html`（可选）、`cc`（可选）、`bcc`（可选）、`attachments`（可选） |
+| `reply_to_email` | 回复指定邮件       | `originalUid`、`text`、`html`（可选）、`replyToAll`（可选）、`includeOriginal`（可选）              |
 
 ## 使用示例
 
