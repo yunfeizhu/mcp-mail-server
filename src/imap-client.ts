@@ -13,6 +13,19 @@ export interface IMAPConfig {
   keepalive?: boolean;
 }
 
+export interface AttachmentMeta {
+  index: number;
+  filename: string;
+  contentType: string;
+  size: number;
+  contentId?: string;
+  contentDisposition?: string;
+}
+
+export interface AttachmentData extends AttachmentMeta {
+  content: Buffer;
+}
+
 export interface EmailMessage {
   uid: number;
   id?: number;
@@ -27,6 +40,7 @@ export interface EmailMessage {
   bcc?: string;
   text?: string;
   html?: string;
+  attachments?: AttachmentMeta[];
 }
 
 export interface MailboxInfo {
@@ -326,6 +340,16 @@ export class IMAPClient extends EventEmitter {
               return '';
             };
             
+            // 提取附件元数据（不含内容Buffer）
+            const attachmentsMeta: AttachmentMeta[] = (parsedMail.attachments || []).map((att, idx) => ({
+              index: idx,
+              filename: att.filename || `attachment_${idx + 1}${att.contentType ? '.' + att.contentType.split('/')[1]?.split(';')[0] || '' : ''}`,
+              contentType: att.contentType || 'application/octet-stream',
+              size: att.size || (att.content ? att.content.length : 0),
+              contentId: att.contentId || undefined,
+              contentDisposition: att.contentDisposition || undefined,
+            }));
+
             messages.push({
               ...data.message,
               subject: parsedMail.subject || 'No Subject',
@@ -334,7 +358,8 @@ export class IMAPClient extends EventEmitter {
               cc: extractEmailAddress(parsedMail.cc) || undefined,
               bcc: extractEmailAddress(parsedMail.bcc) || undefined,
               text: parsedMail.text,
-              html: parsedMail.html
+              html: parsedMail.html,
+              attachments: attachmentsMeta.length > 0 ? attachmentsMeta : undefined,
             } as EmailMessage);
           } catch (error) {
             console.error(`[IMAP] Failed to parse message ${seqno}:`, error);
@@ -363,6 +388,61 @@ export class IMAPClient extends EventEmitter {
       throw new Error(`Message with UID ${uid} not found`);
     }
     return messages[0];
+  }
+
+  async fetchMessageAttachments(uid: number): Promise<AttachmentData[]> {
+    if (!this.imap) {
+      throw new Error('Not connected to IMAP server');
+    }
+
+    if (!this.currentBox) {
+      await this.openBox('INBOX', true);
+    }
+
+    return new Promise((resolve, reject) => {
+      const rawChunks: Buffer[] = [];
+
+      const fetch = this.imap!.fetch([uid], {
+        bodies: ['HEADER', 'TEXT'],
+        struct: true,
+        markSeen: false,
+      });
+
+      fetch.on('message', (msg) => {
+        msg.on('body', (stream) => {
+          const chunks: Buffer[] = [];
+          stream.on('data', (chunk: Buffer) => {
+            chunks.push(chunk);
+            rawChunks.push(chunk);
+          });
+        });
+      });
+
+      fetch.once('error', (error) => {
+        reject(new Error(`Fetch attachments failed: ${error.message}`));
+      });
+
+      fetch.once('end', async () => {
+        try {
+          const rawBuffer = Buffer.concat(rawChunks);
+          const parsedMail = await simpleParser(rawBuffer);
+
+          const attachments: AttachmentData[] = (parsedMail.attachments || []).map((att, idx) => ({
+            index: idx,
+            filename: att.filename || `attachment_${idx + 1}${att.contentType ? '.' + att.contentType.split('/')[1]?.split(';')[0] || '' : ''}`,
+            contentType: att.contentType || 'application/octet-stream',
+            size: att.size || (att.content ? att.content.length : 0),
+            contentId: att.contentId || undefined,
+            contentDisposition: att.contentDisposition || undefined,
+            content: att.content,
+          }));
+
+          resolve(attachments);
+        } catch (error) {
+          reject(new Error(`Failed to parse attachments: ${error instanceof Error ? error.message : String(error)}`));
+        }
+      });
+    });
   }
 
   async deleteMessage(uid: number): Promise<void> {

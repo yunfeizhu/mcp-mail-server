@@ -11,6 +11,7 @@
 
 - **IMAP操作**: 跨邮箱搜索、阅读和管理邮件
 - **SMTP支持**: 发送HTML/文本邮件和附件
+- **附件管理**: 查看附件元数据并保存附件到本地文件
 - **安全配置**: 基于环境变量的TLS/SSL设置
 - **AI友好**: 支持自然语言邮件操作命令
 - **自动连接管理**: 自动处理IMAP/SMTP连接
@@ -35,7 +36,7 @@
   "mcpServers": {
     "mcp-mail-server": {
       "command": "npx",
-      "args": ["mcp-mail-server"],
+      "args": ["-y", "mcp-mail-server"],
       "env": {
         "IMAP_HOST": "your-imap-server.com",
         "IMAP_PORT": "993",
@@ -63,7 +64,78 @@
   "mcpServers": {
     "mcp-mail-server": {
       "command": "npx",
-      "args": ["mcp-mail-server"],
+      "args": ["-y", "mcp-mail-server"],
+      "env": {
+        "IMAP_HOST": "your-imap-server.com",
+        "IMAP_PORT": "993",
+        "IMAP_SECURE": "true",
+        "SMTP_HOST": "your-smtp-server.com",
+        "SMTP_PORT": "465",
+        "SMTP_SECURE": "true",
+        "EMAIL_USER": "your-email@domain.com",
+        "EMAIL_PASS": "your-password"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>Claude Code</summary>
+
+使用 `claude mcp add` 命令添加:
+
+```bash
+claude mcp add mcp-mail-server \
+  -e IMAP_HOST=your-imap-server.com \
+  -e IMAP_PORT=993 \
+  -e IMAP_SECURE=true \
+  -e SMTP_HOST=your-smtp-server.com \
+  -e SMTP_PORT=465 \
+  -e SMTP_SECURE=true \
+  -e EMAIL_USER=your-email@domain.com \
+  -e EMAIL_PASS=your-password \
+  -- npx -y mcp-mail-server
+```
+
+或手动添加到 `.claude/settings.json`：
+
+```json
+{
+  "mcpServers": {
+    "mcp-mail-server": {
+      "command": "npx",
+      "args": ["-y", "mcp-mail-server"],
+      "env": {
+        "IMAP_HOST": "your-imap-server.com",
+        "IMAP_PORT": "993",
+        "IMAP_SECURE": "true",
+        "SMTP_HOST": "your-smtp-server.com",
+        "SMTP_PORT": "465",
+        "SMTP_SECURE": "true",
+        "EMAIL_USER": "your-email@domain.com",
+        "EMAIL_PASS": "your-password"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>OpenAI Codex</summary>
+
+添加到项目根目录的 `codex.json`:
+
+```json
+{
+  "mcpServers": {
+    "mcp-mail-server": {
+      "command": "npx",
+      "args": ["-y", "mcp-mail-server"],
       "env": {
         "IMAP_HOST": "your-imap-server.com",
         "IMAP_PORT": "993",
@@ -84,23 +156,30 @@
 <details>
 <summary>其他MCP客户端</summary>
 
-全局安装方式:
-
-```bash
-npm install -g mcp-mail-server
-```
-
-然后配置:
+其他MCP客户端的配置方式类似，核心配置均为:
 
 ```json
 {
   "mcpServers": {
     "mcp-mail-server": {
-      "command": "mcp-mail-server"
+      "command": "npx",
+      "args": ["-y", "mcp-mail-server"],
+      "env": {
+        "IMAP_HOST": "your-imap-server.com",
+        "IMAP_PORT": "993",
+        "IMAP_SECURE": "true",
+        "SMTP_HOST": "your-smtp-server.com",
+        "SMTP_PORT": "465",
+        "SMTP_SECURE": "true",
+        "EMAIL_USER": "your-email@domain.com",
+        "EMAIL_PASS": "your-password"
+      }
     }
   }
 }
 ```
+
+请根据具体客户端的文档将以上配置放置到对应的配置文件中。
 
 </details>
 
@@ -113,20 +192,25 @@ npm install -g mcp-mail-server
 | `disconnect_all` | 断开所有服务器连接 |
 | `open_mailbox` | 打开指定邮箱/文件夹 |
 | `list_mailboxes` | 列出可用邮件文件夹 |
-| `search_messages` | 使用IMAP条件搜索邮件 |
+| `get_message_count` | 获取当前邮箱邮件总数 |
+| `get_unseen_messages` | 获取所有未读邮件 |
+| `get_recent_messages` | 获取最近邮件 |
 | `search_by_sender` | 按发件人搜索邮件 |
 | `search_by_subject` | 按主题关键词搜索 |
-| `search_by_body` | 搜索邮件内容 |
+| `search_by_recipient` | 按收件人搜索邮件 |
+| `search_by_body` | 搜索邮件正文内容 |
 | `search_since_date` | 按日期搜索邮件 |
+| `search_unread_from_sender` | 按发件人搜索未读邮件 |
 | `search_unreplied_from_sender` | 按发件人搜索未回复邮件 |
-| `search_larger_than` | 按大小搜索邮件 |
+| `search_with_keyword` | 按关键词/标记搜索邮件 |
+| `search_all_messages` | 搜索所有邮件，支持日期范围和数量限制 |
 | `get_message` | 通过UID获取邮件 |
 | `get_messages` | 获取多个邮件 |
 | `delete_message` | 通过UID删除邮件 |
-| `get_unseen_messages` | 获取所有未读邮件 |
-| `get_recent_messages` | 获取最近邮件 |
-| `send_email` | 通过SMTP发送邮件 |
+| `send_email` | 通过SMTP发送邮件（支持附件） |
 | `reply_to_email` | 回复指定邮件 |
+| `get_attachments` | 获取邮件的附件元数据 |
+| `save_attachment` | 下载并保存附件到本地文件 |
 
 <details>
 <summary>详细工具参数</summary>
@@ -141,22 +225,31 @@ npm install -g mcp-mail-server
 - **list_mailboxes**: 无需参数
 
 ### 搜索操作
-- **search_messages**: `criteria` (数组, IMAP搜索条件)
-- **search_by_sender**: `sender` (字符串, 邮箱地址)
-- **search_by_subject**: `subject` (字符串, 关键词)
-- **search_by_body**: `text` (字符串, 搜索文本)
+- **search_by_sender**: `sender` (字符串, 邮箱地址), `startDate` (字符串, 可选), `endDate` (字符串, 可选)
+- **search_by_subject**: `subject` (字符串, 关键词), `startDate` (字符串, 可选), `endDate` (字符串, 可选)
+- **search_by_recipient**: `recipient` (字符串, 邮箱地址), `startDate` (字符串, 可选), `endDate` (字符串, 可选)
+- **search_by_body**: `text` (字符串, 搜索文本), `startDate` (字符串, 可选), `endDate` (字符串, 可选)
 - **search_since_date**: `date` (字符串, 日期格式)
-- **search_unreplied_from_sender**: `sender` (字符串, 邮箱地址), `startDate` (字符串, 可选), `endDate` (字符串, 可选)
-- **search_larger_than**: `size` (数字, 字节数)
+- **search_unread_from_sender**: `sender` (字符串, 邮箱地址), `startDate` (字符串, 可选), `endDate` (字符串, 可选)
+- **search_unreplied_from_sender**: `sender` (字符串, 邮箱地址), `startDate` (字符串, 可选), `endDate` (字符串, 可选), `limit` (数字, 可选)
+- **search_with_keyword**: `keyword` (字符串, 关键词), `startDate` (字符串, 可选), `endDate` (字符串, 可选)
+- **search_all_messages**: `startDate` (字符串, 可选), `endDate` (字符串, 可选), `limit` (数字, 可选, 默认: 50)
 
 ### 邮件操作
+- **get_message_count**: 无需参数
+- **get_unseen_messages**: 无需参数
+- **get_recent_messages**: 无需参数
 - **get_message**: `uid` (数字), `markSeen` (布尔值, 可选)
 - **get_messages**: `uids` (数组), `markSeen` (布尔值, 可选)
 - **delete_message**: `uid` (数字)
 
 ### 邮件发送
-- **send_email**: `to` (字符串), `subject` (字符串), `text` (字符串, 可选), `html` (字符串, 可选), `cc` (字符串, 可选), `bcc` (字符串, 可选)
+- **send_email**: `to` (字符串), `subject` (字符串), `text` (字符串, 可选), `html` (字符串, 可选), `cc` (字符串, 可选), `bcc` (字符串, 可选), `attachments` (字符串数组, 可选, 绝对文件路径)
 - **reply_to_email**: `originalUid` (数字), `text` (字符串), `html` (字符串, 可选), `replyToAll` (布尔值, 可选), `includeOriginal` (布尔值, 可选)
+
+### 附件操作
+- **get_attachments**: `uid` (数字) — 返回元数据: 文件名、类型、大小、索引
+- **save_attachment**: `uid` (数字), `savePath` (字符串, 绝对路径), `attachmentIndex` (数字, 可选, 从0开始), `returnBase64` (布尔值, 可选, 默认: false)
 
 </details>
 
@@ -175,13 +268,22 @@ npm install -g mcp-mail-server
 ### 高级搜索
 - *"查找上周主题包含'紧急'的邮件"*
 - *"显示来自boss@company.com的未回复邮件"*
-- *"显示大于5MB的邮件"*
+- *"搜索发给team@company.com的邮件"*
 - *"获取销售文件夹中的所有邮件"*
+- *"搜索来自boss@company.com的未读邮件"*
+- *"显示最近7天的所有邮件"*
+- *"列出全部邮件，限制20封"*
 
 ### 邮件管理  
 - *"删除UID为123的邮件"*
 - *"标记最近的邮件为已读"*
 - *"列出我的所有邮件文件夹"*
+
+### 附件操作
+- *"查看UID为456的邮件有哪些附件"*
+- *"将UID为456的邮件的所有附件保存到D:/Downloads"*
+- *"下载UID为789的邮件的第一个附件"*
+- *"发送带附件的邮件给team@company.com，附件路径是D:/report.pdf"*
 
 ## 配置
 

@@ -11,6 +11,7 @@ A Model Context Protocol server for IMAP/SMTP email operations with Claude, Curs
 
 - **IMAP Operations**: Search, read, and manage emails across mailboxes
 - **SMTP Support**: Send emails with HTML/text content and attachments  
+- **Attachment Management**: View attachment metadata and save attachments to local files
 - **Secure Configuration**: Environment-based setup with TLS/SSL support
 - **AI-Friendly**: Natural language commands for email operations
 - **Auto Connection Management**: Automatic IMAP/SMTP connection handling
@@ -35,7 +36,7 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "mcp-mail-server": {
       "command": "npx",
-      "args": ["mcp-mail-server"],
+      "args": ["-y", "mcp-mail-server"],
       "env": {
         "IMAP_HOST": "your-imap-server.com",
         "IMAP_PORT": "993",
@@ -63,7 +64,78 @@ Add to your Cursor MCP settings:
   "mcpServers": {
     "mcp-mail-server": {
       "command": "npx",
-      "args": ["mcp-mail-server"],
+      "args": ["-y", "mcp-mail-server"],
+      "env": {
+        "IMAP_HOST": "your-imap-server.com",
+        "IMAP_PORT": "993",
+        "IMAP_SECURE": "true",
+        "SMTP_HOST": "your-smtp-server.com",
+        "SMTP_PORT": "465",
+        "SMTP_SECURE": "true",
+        "EMAIL_USER": "your-email@domain.com",
+        "EMAIL_PASS": "your-password"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>Claude Code</summary>
+
+Add using the `claude mcp add` command:
+
+```bash
+claude mcp add mcp-mail-server \
+  -e IMAP_HOST=your-imap-server.com \
+  -e IMAP_PORT=993 \
+  -e IMAP_SECURE=true \
+  -e SMTP_HOST=your-smtp-server.com \
+  -e SMTP_PORT=465 \
+  -e SMTP_SECURE=true \
+  -e EMAIL_USER=your-email@domain.com \
+  -e EMAIL_PASS=your-password \
+  -- npx -y mcp-mail-server
+```
+
+Or manually add to `.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "mcp-mail-server": {
+      "command": "npx",
+      "args": ["-y", "mcp-mail-server"],
+      "env": {
+        "IMAP_HOST": "your-imap-server.com",
+        "IMAP_PORT": "993",
+        "IMAP_SECURE": "true",
+        "SMTP_HOST": "your-smtp-server.com",
+        "SMTP_PORT": "465",
+        "SMTP_SECURE": "true",
+        "EMAIL_USER": "your-email@domain.com",
+        "EMAIL_PASS": "your-password"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>OpenAI Codex</summary>
+
+Add to `codex.json` in your project root:
+
+```json
+{
+  "mcpServers": {
+    "mcp-mail-server": {
+      "command": "npx",
+      "args": ["-y", "mcp-mail-server"],
       "env": {
         "IMAP_HOST": "your-imap-server.com",
         "IMAP_PORT": "993",
@@ -84,23 +156,30 @@ Add to your Cursor MCP settings:
 <details>
 <summary>Other MCP Clients</summary>
 
-For global installation:
-
-```bash
-npm install -g mcp-mail-server
-```
-
-Then configure with:
+Other MCP clients can be configured similarly. The core configuration is:
 
 ```json
 {
   "mcpServers": {
     "mcp-mail-server": {
-      "command": "mcp-mail-server"
+      "command": "npx",
+      "args": ["-y", "mcp-mail-server"],
+      "env": {
+        "IMAP_HOST": "your-imap-server.com",
+        "IMAP_PORT": "993",
+        "IMAP_SECURE": "true",
+        "SMTP_HOST": "your-smtp-server.com",
+        "SMTP_PORT": "465",
+        "SMTP_SECURE": "true",
+        "EMAIL_USER": "your-email@domain.com",
+        "EMAIL_PASS": "your-password"
+      }
     }
   }
 }
 ```
+
+Refer to your specific client's documentation for the appropriate configuration file location.
 
 </details>
 
@@ -113,20 +192,25 @@ Then configure with:
 | `disconnect_all` | Disconnect from all servers |
 | `open_mailbox` | Open specific mailbox/folder |
 | `list_mailboxes` | List available mail folders |
-| `search_messages` | Search emails with IMAP criteria |
+| `get_message_count` | Get total message count in current mailbox |
+| `get_unseen_messages` | Get all unread emails |
+| `get_recent_messages` | Get recent emails |
 | `search_by_sender` | Find emails from specific sender |
 | `search_by_subject` | Search by subject keywords |
-| `search_by_body` | Search message content |
+| `search_by_recipient` | Find emails sent to specific recipient |
+| `search_by_body` | Search message body content |
 | `search_since_date` | Find emails since date |
+| `search_unread_from_sender` | Find unread emails from specific sender |
 | `search_unreplied_from_sender` | Find unreplied emails from specific sender |
-| `search_larger_than` | Find emails by size |
+| `search_with_keyword` | Search emails by keyword/flag |
+| `search_all_messages` | Search all messages with optional date range and limit |
 | `get_message` | Retrieve email by UID |
 | `get_messages` | Retrieve multiple emails |
 | `delete_message` | Delete email by UID |
-| `get_unseen_messages` | Get all unread emails |
-| `get_recent_messages` | Get recent emails |
-| `send_email` | Send email via SMTP |
+| `send_email` | Send email via SMTP (with optional attachments) |
 | `reply_to_email` | Reply to specific email |
+| `get_attachments` | Get attachment metadata for an email |
+| `save_attachment` | Download and save attachments to local files |
 
 <details>
 <summary>Detailed Tool Parameters</summary>
@@ -141,22 +225,31 @@ Then configure with:
 - **list_mailboxes**: No parameters required
 
 ### Search Operations
-- **search_messages**: `criteria` (array, IMAP search criteria)
-- **search_by_sender**: `sender` (string, email address)
-- **search_by_subject**: `subject` (string, keywords)
-- **search_by_body**: `text` (string, search text)
+- **search_by_sender**: `sender` (string, email address), `startDate` (string, optional), `endDate` (string, optional)
+- **search_by_subject**: `subject` (string, keywords), `startDate` (string, optional), `endDate` (string, optional)
+- **search_by_recipient**: `recipient` (string, email address), `startDate` (string, optional), `endDate` (string, optional)
+- **search_by_body**: `text` (string, search text), `startDate` (string, optional), `endDate` (string, optional)
 - **search_since_date**: `date` (string, date format)
-- **search_unreplied_from_sender**: `sender` (string, email address), `startDate` (string, optional), `endDate` (string, optional)
-- **search_larger_than**: `size` (number, bytes)
+- **search_unread_from_sender**: `sender` (string, email address), `startDate` (string, optional), `endDate` (string, optional)
+- **search_unreplied_from_sender**: `sender` (string, email address), `startDate` (string, optional), `endDate` (string, optional), `limit` (number, optional)
+- **search_with_keyword**: `keyword` (string, keyword), `startDate` (string, optional), `endDate` (string, optional)
+- **search_all_messages**: `startDate` (string, optional), `endDate` (string, optional), `limit` (number, optional, default: 50)
 
 ### Message Operations
+- **get_message_count**: No parameters required
+- **get_unseen_messages**: No parameters required
+- **get_recent_messages**: No parameters required
 - **get_message**: `uid` (number), `markSeen` (boolean, optional)
 - **get_messages**: `uids` (array), `markSeen` (boolean, optional)
 - **delete_message**: `uid` (number)
 
 ### Email Sending
-- **send_email**: `to` (string), `subject` (string), `text` (string, optional), `html` (string, optional), `cc` (string, optional), `bcc` (string, optional)
+- **send_email**: `to` (string), `subject` (string), `text` (string, optional), `html` (string, optional), `cc` (string, optional), `bcc` (string, optional), `attachments` (string[], optional, absolute file paths)
 - **reply_to_email**: `originalUid` (number), `text` (string), `html` (string, optional), `replyToAll` (boolean, optional), `includeOriginal` (boolean, optional)
+
+### Attachment Operations
+- **get_attachments**: `uid` (number) — Returns metadata: filename, contentType, size, index
+- **save_attachment**: `uid` (number), `savePath` (string, absolute path), `attachmentIndex` (number, optional, 0-based), `returnBase64` (boolean, optional, default: false)
 
 </details>
 
@@ -175,13 +268,22 @@ Use natural language commands with your AI assistant:
 ### Advanced Searches
 - *"Find emails with 'urgent' in the subject from last week"*
 - *"Show me unreplied emails from boss@company.com"*
-- *"Show me large emails over 5MB"*
+- *"Search emails sent to team@company.com"*
 - *"Get all emails from the Sales folder"*
+- *"Show unread emails from boss@company.com"*
+- *"Show me all emails from the last 7 days"*
+- *"List all messages, limit to 20"*
 
 ### Email Management  
 - *"Delete the email with UID 123"*
 - *"Mark recent emails as read"*
 - *"List all my email folders"*
+
+### Attachment Operations
+- *"Show me the attachments of email UID 456"*
+- *"Save all attachments from email UID 456 to D:/Downloads"*
+- *"Download the first attachment from email UID 789"*
+- *"Send an email to team@company.com with attachment D:/report.pdf"*
 
 ## Configuration
 

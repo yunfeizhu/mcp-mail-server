@@ -5,7 +5,9 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { IMAPClient, IMAPConfig, EmailMessage } from './imap-client.js';
+import { writeFile, readFile, mkdir, access } from 'fs/promises';
+import path from 'path';
+import { IMAPClient, IMAPConfig, EmailMessage, AttachmentMeta, AttachmentData } from './imap-client.js';
 import { SMTPClient, SMTPConfig, EmailOptions } from './smtp-client.js';
 import { EMAIL_CONFIG } from './config.js';
 
@@ -70,6 +72,7 @@ interface SendEmailArgs {
   html?: string;
   cc?: string;
   bcc?: string;
+  attachments?: string[];
 }
 
 interface SearchArgs {
@@ -566,6 +569,29 @@ class MailMCPServer {
               required: ['keyword'],
             },
           },
+          {
+            name: 'search_all_messages',
+            description: 'Search all messages across mailboxes with optional date range and limit. Auto-connects if not already connected.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                startDate: {
+                  type: 'string',
+                  description: 'Optional start date/time for filtering. Supports multiple formats: "2025-07-01", "2025-07-01 14:30:00", "01-Jul-2025", or ISO format. Leave empty to not filter by start date.'
+                },
+                endDate: {
+                  type: 'string',
+                  description: 'Optional end date/time for filtering. Supports multiple formats: "2025-08-01", "2025-08-01 23:59:59", "01-Aug-2025", or ISO format. Leave empty to not filter by end date.'
+                },
+                limit: {
+                  type: 'number',
+                  description: 'Maximum number of messages to return (default: 50). Use a smaller value for faster results.',
+                  default: 50
+                }
+              },
+              required: [],
+            },
+          },
           // === 邮件读取 ===
           {
             name: 'get_messages',
@@ -639,6 +665,13 @@ class MailMCPServer {
                   type: 'string',
                   description: 'BCC recipients, comma-separated (optional)',
                 },
+                attachments: {
+                  type: 'array',
+                  description: 'Array of absolute file paths to attach (optional)',
+                  items: {
+                    type: 'string'
+                  }
+                },
               },
               required: ['to', 'subject'],
             },
@@ -690,6 +723,48 @@ class MailMCPServer {
               required: ['uid'],
             },
           },
+          // === 附件管理 ===
+          {
+            name: 'get_attachments',
+            description: 'Get attachment metadata (filename, size, contentType, index) for a specific email by UID. Does not download attachment content. Auto-connects if not already connected.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                uid: {
+                  type: 'number',
+                  description: 'Message UID to get attachments for',
+                },
+              },
+              required: ['uid'],
+            },
+          },
+          {
+            name: 'save_attachment',
+            description: 'Download and save email attachments to local file system. Can save a single attachment by index or all attachments. Auto-connects if not already connected.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                uid: {
+                  type: 'number',
+                  description: 'Message UID containing the attachment(s)',
+                },
+                savePath: {
+                  type: 'string',
+                  description: 'Absolute path to the directory where attachments will be saved',
+                },
+                attachmentIndex: {
+                  type: 'number',
+                  description: 'Index of the specific attachment to save (0-based). If omitted, all attachments will be saved.',
+                },
+                returnBase64: {
+                  type: 'boolean',
+                  description: 'Whether to also return base64-encoded content in the response (default: false)',
+                  default: false,
+                },
+              },
+              required: ['uid', 'savePath'],
+            },
+          },
           // === 连接管理 ===
           {
             name: 'get_connection_status',
@@ -736,12 +811,18 @@ class MailMCPServer {
             return await this.handleSearchByBody(args);
           case 'search_with_keyword':
             return await this.handleSearchWithKeyword(args);
+          case 'search_all_messages':
+            return await this.handleSearchAllMessages(args);
           case 'get_messages':
             return await this.handleGetMessages(args);
           case 'get_message':
             return await this.handleGetMessage(args);
           case 'delete_message':
             return await this.handleDeleteMessage(args);
+          case 'get_attachments':
+            return await this.handleGetAttachments(args);
+          case 'save_attachment':
+            return await this.handleSaveAttachment(args);
           case 'get_message_count':
             return await this.handleGetMessageCount();
           case 'get_unseen_messages':
@@ -1265,6 +1346,34 @@ class MailMCPServer {
     }
   }
 
+  private async handleSearchAllMessages(args: any) {
+    await this.ensureRequiredConnections(true, false);
+
+    const startDate = args.startDate || '';
+    const endDate = args.endDate || '';
+    const limit = args.limit || 50;
+
+    try {
+      const criteria: any[] = ['ALL'];
+      console.error(`[IMAP] Searching all messages across mailboxes, limit: ${limit}`);
+
+      const result = await this.searchInMultipleMailboxes(criteria, 'All Messages', '*', startDate, endDate, limit);
+      if (startDate) result.startDate = startDate;
+      if (endDate) result.endDate = endDate;
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(this.formatError(error, 'Search all messages failed'));
+    }
+  }
+
   private async handleGetMessages(args: any) {
     await this.ensureRequiredConnections(true, false);
 
@@ -1410,6 +1519,185 @@ class MailMCPServer {
     }
   }
 
+  private async handleGetAttachments(args: any) {
+    await this.ensureRequiredConnections(true, false);
+
+    const uid = args.uid;
+    if (typeof uid !== 'number') {
+      throw new Error('uid must be a number');
+    }
+
+    try {
+      // 通过多邮箱查找获取邮件（含附件元数据）
+      const message = await this.findMessageInMultipleMailboxes(uid);
+
+      if (!message) {
+        throw new Error(`Message with UID ${uid} not found in any mailbox`);
+      }
+
+      const attachments = message.attachments || [];
+
+      const responseData = {
+        uid,
+        subject: message.subject,
+        from: message.from,
+        attachmentCount: attachments.length,
+        attachments: attachments.map(att => ({
+          index: att.index,
+          filename: att.filename,
+          contentType: att.contentType,
+          size: att.size,
+          contentId: att.contentId,
+          contentDisposition: att.contentDisposition,
+        })),
+        note: attachments.length > 0
+          ? `Found ${attachments.length} attachment(s). Use save_attachment tool with uid=${uid} to download.`
+          : 'This email has no attachments.',
+      };
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(responseData, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(this.formatError(error, 'Failed to get attachments'));
+    }
+  }
+
+  private async handleSaveAttachment(args: any) {
+    await this.ensureRequiredConnections(true, false);
+
+    const uid = args.uid;
+    const savePath = args.savePath;
+    const attachmentIndex = args.attachmentIndex;
+    const returnBase64 = args.returnBase64 || false;
+
+    if (typeof uid !== 'number') {
+      throw new Error('uid must be a number');
+    }
+    if (typeof savePath !== 'string' || !savePath) {
+      throw new Error('savePath must be a non-empty string');
+    }
+    if (!path.isAbsolute(savePath)) {
+      throw new Error('savePath must be an absolute path');
+    }
+
+    try {
+      // 确保目录存在
+      await mkdir(savePath, { recursive: true });
+
+      // 先找到邮件所在的邮箱
+      const message = await this.findMessageInMultipleMailboxes(uid);
+      if (!message) {
+        throw new Error(`Message with UID ${uid} not found in any mailbox`);
+      }
+
+      // 获取附件内容
+      const allAttachments = await this.imapClient!.fetchMessageAttachments(uid);
+
+      if (allAttachments.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ uid, note: 'This email has no attachments.' }, null, 2),
+            },
+          ],
+        };
+      }
+
+      // 筛选要保存的附件
+      let attachmentsToSave: AttachmentData[];
+      if (attachmentIndex !== undefined) {
+        if (typeof attachmentIndex !== 'number' || attachmentIndex < 0 || attachmentIndex >= allAttachments.length) {
+          throw new Error(`Invalid attachmentIndex: ${attachmentIndex}. Valid range: 0-${allAttachments.length - 1}`);
+        }
+        attachmentsToSave = [allAttachments[attachmentIndex]];
+      } else {
+        attachmentsToSave = allAttachments;
+      }
+
+      const savedFiles: Array<{
+        index: number;
+        filename: string;
+        contentType: string;
+        size: number;
+        savedPath: string;
+        base64?: string;
+      }> = [];
+
+      for (const att of attachmentsToSave) {
+        // 生成安全的文件名（避免路径遍历）
+        const safeFilename = path.basename(att.filename);
+        let targetPath = path.join(savePath, safeFilename);
+
+        // 文件名冲突自动追加序号
+        let counter = 1;
+        const ext = path.extname(safeFilename);
+        const nameWithoutExt = path.basename(safeFilename, ext);
+        while (true) {
+          try {
+            await access(targetPath);
+            // 文件已存在，追加序号
+            targetPath = path.join(savePath, `${nameWithoutExt}_${counter}${ext}`);
+            counter++;
+          } catch {
+            // 文件不存在，可以使用
+            break;
+          }
+        }
+
+        await writeFile(targetPath, att.content);
+        console.error(`[Attachment] Saved: ${targetPath} (${att.size} bytes)`);
+
+        const fileInfo: {
+          index: number;
+          filename: string;
+          contentType: string;
+          size: number;
+          savedPath: string;
+          base64?: string;
+        } = {
+          index: att.index,
+          filename: att.filename,
+          contentType: att.contentType,
+          size: att.size,
+          savedPath: targetPath,
+        };
+
+        if (returnBase64) {
+          fileInfo.base64 = att.content.toString('base64');
+        }
+
+        savedFiles.push(fileInfo);
+      }
+
+      const responseData = {
+        uid,
+        subject: message.subject,
+        totalAttachments: allAttachments.length,
+        savedCount: savedFiles.length,
+        savedFiles,
+        note: `Successfully saved ${savedFiles.length} attachment(s) to ${savePath}`,
+      };
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(responseData, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(this.formatError(error, 'Failed to save attachment'));
+    }
+  }
+
   private async handleGetMessageCount() {
     await this.ensureRequiredConnections(true, false);
 
@@ -1542,6 +1830,26 @@ class MailMCPServer {
 
     if (!emailOptions.text && !emailOptions.html) {
       throw new Error('Either text or html content is required');
+    }
+
+    // 处理附件
+    if (args.attachments && args.attachments.length > 0) {
+      const attachmentList: Array<{ filename: string; content: Buffer; contentType?: string }> = [];
+      for (const filePath of args.attachments) {
+        if (!path.isAbsolute(filePath)) {
+          throw new Error(`Attachment path must be absolute: ${filePath}`);
+        }
+        try {
+          const content = await readFile(filePath);
+          attachmentList.push({
+            filename: path.basename(filePath),
+            content,
+          });
+        } catch (error) {
+          throw new Error(`Failed to read attachment file: ${filePath} - ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      emailOptions.attachments = attachmentList;
     }
 
     try {
