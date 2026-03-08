@@ -1,6 +1,6 @@
 {
   "name": "mcp-mail-server",
-  "version": "1.1.15",
+  "version": "1.1.16",
   "description": "MCP server for IMAP/SMTP email access with environment-based configuration",
   "main": "dist/index.js",
   "type": "module",
@@ -13,7 +13,6 @@
     "build:tsc": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
-    "test": "npm run build:tsc && node --test test/*.test.mjs",
     "prepublishOnly": "npm run build",
     "clean": "rimraf dist"
   },

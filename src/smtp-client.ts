@@ -20,7 +20,6 @@ export interface EmailOptions {
     filename: string;
     content: string | Buffer;
     contentType?: string;
-    encoding?: string;
   }>;
 }
 
