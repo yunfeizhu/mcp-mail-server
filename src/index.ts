@@ -382,18 +382,28 @@ class MailMCPServer {
           },
           {
             name: 'get_unseen_messages',
-            description: 'Get all unseen (unread) messages. Auto-connects if not already connected.',
+            description: 'Get unseen (unread) messages. Returns the most recent unseen messages up to the specified limit. Auto-connects if not already connected.',
             inputSchema: {
               type: 'object',
-              properties: {},
+              properties: {
+                limit: {
+                  type: 'number',
+                  description: 'Maximum number of messages to fetch (default: 50)',
+                },
+              },
             },
           },
           {
             name: 'get_recent_messages',
-            description: 'Get all recent messages. Auto-connects if not already connected.',
+            description: 'Get recent messages. Returns the most recent messages up to the specified limit. Auto-connects if not already connected.',
             inputSchema: {
               type: 'object',
-              properties: {},
+              properties: {
+                limit: {
+                  type: 'number',
+                  description: 'Maximum number of messages to fetch (default: 50)',
+                },
+              },
             },
           },
           {
@@ -826,9 +836,9 @@ class MailMCPServer {
           case 'get_message_count':
             return await this.handleGetMessageCount();
           case 'get_unseen_messages':
-            return await this.handleGetUnseenMessages();
+            return await this.handleGetUnseenMessages(args?.limit as number | undefined);
           case 'get_recent_messages':
-            return await this.handleGetRecentMessages();
+            return await this.handleGetRecentMessages(args?.limit as number | undefined);
           case 'get_connection_status':
             return await this.handleGetConnectionStatus();
           case 'send_email':
@@ -1717,12 +1727,13 @@ class MailMCPServer {
     }
   }
 
-  private async handleGetUnseenMessages() {
+  private async handleGetUnseenMessages(limit?: number) {
     await this.ensureRequiredConnections(true, false);
 
     try {
-      const messages = await this.imapClient!.getUnseenMessages();
-      
+      const fetchLimit = limit && limit > 0 ? limit : 50;
+      const messages = await this.imapClient!.getUnseenMessages(fetchLimit);
+
       return {
         content: [
           {
@@ -1736,12 +1747,13 @@ class MailMCPServer {
     }
   }
 
-  private async handleGetRecentMessages() {
+  private async handleGetRecentMessages(limit?: number) {
     await this.ensureRequiredConnections(true, false);
 
     try {
-      const messages = await this.imapClient!.getRecentMessages();
-      
+      const fetchLimit = limit && limit > 0 ? limit : 50;
+      const messages = await this.imapClient!.getRecentMessages(fetchLimit);
+
       return {
         content: [
           {
