@@ -17,6 +17,37 @@
 - **自动连接管理**: 自动处理IMAP/SMTP连接
 - **多邮箱支持**: 访问收件箱、已发送和自定义文件夹
 
+## 更新日志
+
+### [1.2.1] - 2026-03-18
+
+**修复**
+- 修复搜索条件（FROM/TO/SUBJECT/BODY/KEYWORD/SINCE）未使用嵌套数组格式，导致 TO 等搜索报错
+- 修复 `search()` criteria 被多包一层数组，导致复合搜索条件失效
+- 修复 `deleteMessage()` 在只读模式下操作失败
+- 修复 `getRecentMessages()` 误用 IMAP `RECENT` 标志，改为按 UID 取最新 N 封
+- 修复 `getRecentMessages()` / `getUnseenMessages()` 依赖上次操作遗留的邮箱状态
+- 修复 `cleanReplySubject()` 只去除单层 `Re:` 前缀，导致多层回复的未回复检测误判
+- 修复邮件日期存储为本地化字符串，跨平台解析不一致，改为 ISO 8601 格式
+- 修复 `ensureIMAPConnection()` 并发等待无超时，可能无限阻塞
+- 修复 `saveSentMessage()` 保存失败时仍返回 `sentFolderSaved: true`
+- 修复 `handleGetMessages()` / `handleDeleteMessage()` 依赖 `currentBox` 状态查找邮件
+- 修复 `reply_to_email` 在 `text` 为空时将 `"undefined"` 写入正文
+
+**新增**
+- 全部搜索工具新增 `inboxOnly` 参数，支持仅搜索收件箱
+
+**优化**
+- `ensureSMTPConnection()` 补充并发初始化保护，含 30 秒超时
+- 发件箱通过 RFC 6154 `\Sent` 属性自动探测并缓存，兼容各邮件服务商
+- `saveMessageToFolder()` 简化逻辑，找不到发件箱时跳过保存
+- 搜索改用 `slice(-limit)` 优先取最新邮件，日期过滤后不再返回空结果
+- 回复邮件引用内容增加 HTML 转义，防止 XSS 注入
+
+完整版本历史请查看 [CHANGELOG.zh.md](CHANGELOG.zh.md)。
+
+---
+
 ## 快速开始
 
 1. **安装**: `npm install -g mcp-mail-server`
