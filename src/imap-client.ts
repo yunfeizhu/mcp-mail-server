@@ -182,7 +182,7 @@ export class IMAPClient extends EventEmitter {
     }
 
     return new Promise((resolve, reject) => {
-      this.imap!.search([criteria], (error, results) => {
+      this.imap!.search(criteria, (error, results) => {
         if (error) {
           console.error('[IMAP] Search failed:', error.message);
           reject(new Error(`Search failed: ${error.message}`));
@@ -267,17 +267,9 @@ export class IMAPClient extends EventEmitter {
         msg.once('attributes', (attrs) => {
           message.uid = attrs.uid;
           message.flags = attrs.flags || [];
-          // 转换为中国东八区时间格式
+          // 存储为 ISO 8601 格式，确保跨平台一致解析
           const date = attrs.date || new Date();
-          message.date = date.toLocaleString('zh-CN', { 
-            timeZone: 'Asia/Shanghai',
-            year: 'numeric',
-            month: '2-digit', 
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-          });
+          message.date = (date instanceof Date ? date : new Date(date)).toISOString();
           message.size = attrs.size || 0;
         });
 
@@ -452,10 +444,8 @@ export class IMAPClient extends EventEmitter {
       throw new Error('Not connected to IMAP server');
     }
 
-    // 如果没有打开邮箱，自动打开收件箱
-    if (!this.currentBox) {
-      await this.openBox('INBOX', false); // 需要写权限来删除
-    }
+    // 强制以写模式重新打开邮箱，防止之前以只读模式打开后删除失败
+    await this.openBox(this.currentBox || 'INBOX', false);
 
     return new Promise((resolve, reject) => {
       this.imap!.addFlags(uid, ['\\Deleted'], (error) => {
@@ -483,23 +473,24 @@ export class IMAPClient extends EventEmitter {
   }
 
   async getMessageCount(): Promise<number> {
-    // Use openBox to get message count directly from server STATUS,
-    // instead of SEARCH ALL which can be extremely slow on large mailboxes
-    const boxInfo = await this.openBox(this.currentBox || 'INBOX', true);
+    // 始终从 INBOX 取数量，不依赖外部的当前邮箱状态
+    const boxInfo = await this.openBox('INBOX', true);
     return boxInfo.messages.total;
   }
 
   async getUnseenMessages(limit: number = 50): Promise<EmailMessage[]> {
+    // 始终从 INBOX 取，不依赖外部的当前邮箱状态
+    await this.openBox('INBOX', true);
     const unseenUids = await this.search(['UNSEEN']);
-    // Only fetch the most recent N messages to avoid timeout on large mailboxes
     const limitedUids = unseenUids.slice(-limit);
     return this.fetchMessages(limitedUids);
   }
 
   async getRecentMessages(limit: number = 50): Promise<EmailMessage[]> {
-    const recentUids = await this.search(['RECENT']);
-    // Only fetch the most recent N messages to avoid timeout on large mailboxes
-    const limitedUids = recentUids.slice(-limit);
+    // 始终从 INBOX 取，不依赖外部的当前邮箱状态
+    await this.openBox('INBOX', true);
+    const allUids = await this.search(['ALL']);
+    const limitedUids = allUids.slice(-limit);
     return this.fetchMessages(limitedUids);
   }
 
@@ -609,31 +600,18 @@ export class IMAPClient extends EventEmitter {
   }
 
   // 保存邮件到指定文件夹（用于已发送邮件）
-  async saveMessageToFolder(messageContent: string, folderName: string = 'INBOX.Sent'): Promise<void> {
+  async saveMessageToFolder(messageContent: string, folderName: string): Promise<void> {
     if (!this.connected) {
       throw new Error('IMAP client is not connected');
     }
 
     return new Promise((resolve, reject) => {
-      // 尝试打开目标文件夹
       this.imap!.openBox(folderName, false, (err) => {
         if (err) {
-          // 如果文件夹不存在，尝试创建
-          console.warn(`[IMAP] Folder ${folderName} not found, trying to create it`);
-          this.imap!.addBox(folderName, (createErr) => {
-            if (createErr) {
-              console.error(`[IMAP] Failed to create folder ${folderName}:`, createErr.message);
-              // 如果创建失败，尝试其他常见的发件箱名称
-              this.trySaveToAlternateSentFolders(messageContent, resolve, reject);
-              return;
-            }
-            // 创建成功后再次尝试打开并保存
-            this.saveToOpenedFolder(messageContent, folderName, resolve, reject);
-          });
-        } else {
-          // 文件夹存在，直接保存
-          this.saveToOpenedFolder(messageContent, folderName, resolve, reject);
+          reject(new Error(`Failed to open folder ${folderName}: ${err.message}`));
+          return;
         }
+        this.saveToOpenedFolder(messageContent, folderName, resolve, reject);
       });
     });
   }
@@ -648,29 +626,5 @@ export class IMAPClient extends EventEmitter {
         resolve();
       }
     });
-  }
-
-  private trySaveToAlternateSentFolders(messageContent: string, resolve: () => void, reject: (error: Error) => void): void {
-    const alternateFolders = ['Sent', 'SENT', 'Sent Items', 'Sent Messages', '已发送'];
-    let currentIndex = 0;
-
-    const tryNext = () => {
-      if (currentIndex >= alternateFolders.length) {
-        console.warn('[IMAP] All sent folder attempts failed, message not saved to sent folder');
-        resolve(); // 不抛出错误，因为邮件已经发送成功
-        return;
-      }
-
-      const folderName = alternateFolders[currentIndex++];
-      this.imap!.openBox(folderName, false, (err) => {
-        if (err) {
-          tryNext(); // 尝试下一个文件夹
-        } else {
-          this.saveToOpenedFolder(messageContent, folderName, resolve, reject);
-        }
-      });
-    };
-
-    tryNext();
   }
 }

@@ -17,6 +17,37 @@ A Model Context Protocol server for IMAP/SMTP email operations with Claude, Curs
 - **Auto Connection Management**: Automatic IMAP/SMTP connection handling
 - **Multi-Mailbox Support**: Access INBOX, Sent, and custom folders
 
+## Changelog
+
+### [1.2.1] - 2026-03-18
+
+**Fixed**
+- Fixed search criteria (FROM/TO/SUBJECT/BODY/KEYWORD/SINCE) not using nested array format, causing errors on TO and other searches
+- Fixed `search()` wrapping criteria in an extra array, breaking compound search conditions
+- Fixed `deleteMessage()` failing silently when the mailbox was opened in read-only mode
+- Fixed `getRecentMessages()` misusing the IMAP `RECENT` flag; now fetches latest N messages by UID
+- Fixed `getRecentMessages()` / `getUnseenMessages()` relying on leftover mailbox state from previous operations
+- Fixed `cleanReplySubject()` only stripping one `Re:` prefix layer, causing false negatives in unreplied detection
+- Fixed email date stored as locale string causing inconsistent `new Date()` parsing across platforms; changed to ISO 8601
+- Fixed `ensureIMAPConnection()` having no timeout while waiting for concurrent initialization
+- Fixed `saveSentMessage()` always returning `sentFolderSaved: true` even when save failed
+- Fixed `handleGetMessages()` / `handleDeleteMessage()` relying on `currentBox` state to locate messages
+- Fixed `reply_to_email` writing literal `"undefined"` into the body when `text` is empty
+
+**Added**
+- All search tools now support an `inboxOnly` parameter to restrict search to INBOX only
+
+**Improved**
+- `ensureSMTPConnection()` now has concurrency guard with 30-second timeout, consistent with IMAP
+- Sent mailbox auto-detected via RFC 6154 `\Sent` special-use attribute with result caching, compatible with all mail providers
+- `saveMessageToFolder()` simplified; skips saving if no sent folder is found
+- Search now uses `slice(-limit)` to fetch the newest messages first, preventing empty results after date filtering
+- HTML-escape applied to quoted content in reply emails to prevent XSS injection
+
+For the full version history, see [CHANGELOG.md](CHANGELOG.md).
+
+---
+
 ## Quick Start
 
 1. **Install**: `npm install -g mcp-mail-server`
