@@ -10,6 +10,7 @@ export interface IMAPConfig {
   tls?: boolean;
   connTimeout?: number;
   authTimeout?: number;
+  socketTimeout?: number;
   keepalive?: boolean;
 }
 
@@ -71,7 +72,7 @@ export class IMAPClient extends EventEmitter {
     return new Promise((resolve, reject) => {
       console.error(`[IMAP] Connecting to ${this.config.host}:${this.config.port} (TLS: ${this.config.tls})`);
       
-      const imapConfig: Imap.Config = {
+      const imapConfig: Imap.Config & { socketTimeout?: number } = {
         user: this.config.username,
         password: this.config.password,
         host: this.config.host,
@@ -81,8 +82,9 @@ export class IMAPClient extends EventEmitter {
           rejectUnauthorized: false,
           servername: this.config.host
         },
-        connTimeout: this.config.connTimeout || 60000,
-        authTimeout: this.config.authTimeout || 30000,
+        connTimeout: this.config.connTimeout ?? 60000,
+        authTimeout: this.config.authTimeout ?? 30000,
+        socketTimeout: this.config.socketTimeout ?? 60000,
         keepalive: this.config.keepalive !== false
       };
 
@@ -481,22 +483,24 @@ export class IMAPClient extends EventEmitter {
   }
 
   async getMessageCount(): Promise<number> {
-    if (!this.currentBox) {
-      await this.openBox('INBOX', true);
-    }
-    
-    const uids = await this.search(['ALL']);
-    return uids.length;
+    // Use openBox to get message count directly from server STATUS,
+    // instead of SEARCH ALL which can be extremely slow on large mailboxes
+    const boxInfo = await this.openBox(this.currentBox || 'INBOX', true);
+    return boxInfo.messages.total;
   }
 
-  async getUnseenMessages(): Promise<EmailMessage[]> {
+  async getUnseenMessages(limit: number = 50): Promise<EmailMessage[]> {
     const unseenUids = await this.search(['UNSEEN']);
-    return this.fetchMessages(unseenUids);
+    // Only fetch the most recent N messages to avoid timeout on large mailboxes
+    const limitedUids = unseenUids.slice(-limit);
+    return this.fetchMessages(limitedUids);
   }
 
-  async getRecentMessages(): Promise<EmailMessage[]> {
+  async getRecentMessages(limit: number = 50): Promise<EmailMessage[]> {
     const recentUids = await this.search(['RECENT']);
-    return this.fetchMessages(recentUids);
+    // Only fetch the most recent N messages to avoid timeout on large mailboxes
+    const limitedUids = recentUids.slice(-limit);
+    return this.fetchMessages(limitedUids);
   }
 
   private parseHeaders(headerText: string): Record<string, string> {
