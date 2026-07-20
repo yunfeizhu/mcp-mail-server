@@ -21,10 +21,16 @@ Search, read, organize, reply to, and send email through any standards-based IMA
 
 ## Why this server?
 
-| | |
-|---|---|
-| **🔎 Find what matters**<br>Search across folders by sender, recipient, subject, body, date, read state, and reply state. | **✉️ Act without leaving the conversation**<br>Read, send, reply, move, and delete messages using natural language. |
-| **📎 Work with attachments**<br>Inspect metadata, download files, and send local attachments through explicit filesystem allowlists. | **🔐 Keep control**<br>Run locally, connect directly to your mail provider, verify TLS certificates, and enforce payload limits. |
+<table>
+  <tr>
+    <td width="50%"><strong>🔎 Find what matters</strong><br>Search across folders by sender, recipient, subject, body, date, read state, and reply state.</td>
+    <td width="50%"><strong>✉️ Act without leaving the conversation</strong><br>Read, send, reply, move, and delete messages using natural language.</td>
+  </tr>
+  <tr>
+    <td width="50%"><strong>📎 Work with attachments</strong><br>Inspect metadata, download files, and send local attachments through explicit filesystem allowlists.</td>
+    <td width="50%"><strong>🔐 Keep control</strong><br>Run locally, connect directly to your mail provider, verify TLS certificates, and enforce payload limits.</td>
+  </tr>
+</table>
 
 ## What can I ask?
 
