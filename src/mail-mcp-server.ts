@@ -11,7 +11,7 @@ import { EmailOptions } from './smtp-client.js';
 import { EMAIL_CONFIG } from './config.js';
 import { SerialTaskQueue } from './async-queue.js';
 import { FileAccessPolicy } from './file-access-policy.js';
-import { MessageRef, parseMessageRef } from './message-ref.js';
+import { MessageRef, parseMessageRef, parseMoveMessageRef } from './message-ref.js';
 import { MAIL_TOOLS } from './tool-definitions.js';
 import {
   GetMessagesArgs,
@@ -22,12 +22,11 @@ import {
   SendEmailArgs,
 } from './mail-types.js';
 import {
-  buildQuotedHtml,
-  buildQuotedText,
+  appendQuotedOriginal,
+  appendSignature,
   cleanReplySubject,
   extractEmailFromAddress,
   extractEmailsFromAddressField,
-  textToHtml,
 } from './mail-utils.js';
 import { MailSearchService } from './search-service.js';
 import { MailConnectionManager } from './mail-connection-manager.js';
@@ -55,7 +54,7 @@ export class MailMCPServer {
     this.server = new Server(
       {
         name: 'mcp-mail',
-        version: '1.2.2',
+        version: '1.2.3',
       },
       {
         capabilities: {
@@ -116,6 +115,8 @@ export class MailMCPServer {
             return await this.handleGetMessage(args);
           case 'delete_message':
             return await this.handleDeleteMessage(args);
+          case 'move_message':
+            return await this.handleMoveMessage(args);
           case 'get_attachments':
             return await this.handleGetAttachments(args);
           case 'save_attachment':
@@ -375,6 +376,41 @@ export class MailMCPServer {
     }
   }
 
+  private async handleMoveMessage(args: unknown) {
+    await this.connections.ensure(true, false);
+
+    const ref = parseMoveMessageRef(args);
+
+    try {
+      await this.openMessageRef(ref, false);
+      const result = await this.connections.imap.moveMessage(ref.uid, ref.targetMailbox);
+      const response: Record<string, unknown> = {
+        moved: true,
+        sourceMailbox: ref.mailbox,
+        sourceUid: ref.uid,
+        sourceUidValidity: ref.uidValidity,
+        targetMailbox: ref.targetMailbox,
+      };
+
+      if (result.destinationUid !== undefined) {
+        response.destinationUid = result.destinationUid;
+      } else {
+        response.note = 'The server did not return a destination UID. Search the target mailbox to refresh the message reference.';
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(response, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(this.formatError(error, 'Failed to move message'));
+    }
+  }
+
   private async handleGetAttachments(args: any) {
     await this.connections.ensure(true, false);
 
@@ -631,18 +667,20 @@ export class MailMCPServer {
       throw new Error('subject must be a non-empty string');
     }
 
+    if (!args.text && !args.html) {
+      throw new Error('Either text or html content is required');
+    }
+
+    const signedContent = appendSignature(args.text, args.html, args.signature);
     const emailOptions: EmailOptions = {
       to: args.to.split(',').map((email: string) => email.trim()),
       subject: args.subject,
-      text: args.text,
-      html: args.html,
+      text: signedContent.text,
+      html: signedContent.html,
       cc: args.cc ? args.cc.split(',').map((email: string) => email.trim()) : undefined,
       bcc: args.bcc ? args.bcc.split(',').map((email: string) => email.trim()) : undefined,
     };
 
-    if (!emailOptions.text && !emailOptions.html) {
-      throw new Error('Either text or html content is required');
-    }
     this.validateOutgoingContent(emailOptions.text, emailOptions.html);
 
     // 处理附件
@@ -746,22 +784,22 @@ export class MailMCPServer {
       const subject = `Re: ${cleanReplySubject(originalMessage.subject || '')}`;
 
       // 构建回复内容
-      let finalText: string | undefined = replyText;
-      let finalHtml: string | undefined = replyHtml;
+      const signedReply = appendSignature(replyText, replyHtml, args.signature);
+      let finalText: string | undefined = signedReply.text;
+      let finalHtml: string | undefined = signedReply.html;
 
       if (includeOriginal && originalMessage) {
         const originalDate = originalMessage.date ? new Date(originalMessage.date).toLocaleString() : 'Unknown Date';
         const originalFromDisplay = originalMessage.from || 'Unknown Sender';
-
-        // 构建引用的原始邮件文本
-        const quotedText = buildQuotedText(originalMessage.text || '', originalDate, originalFromDisplay);
-        finalText = `${replyText || ''}\n\n${quotedText}`;
-
-        // 如果有HTML内容，也构建HTML格式的引用
-        if (replyHtml || originalMessage.html) {
-          const quotedHtml = buildQuotedHtml(originalMessage.text || originalMessage.html || '', originalDate, originalFromDisplay);
-          finalHtml = `${replyHtml || textToHtml(replyText || '')}<br><br>${quotedHtml}`;
-        }
+        const replyContent = appendQuotedOriginal(
+          signedReply,
+          originalMessage.text,
+          originalMessage.html,
+          originalDate,
+          originalFromDisplay
+        );
+        finalText = replyContent.text;
+        finalHtml = replyContent.html;
       }
 
       this.validateOutgoingContent(finalText, finalHtml);

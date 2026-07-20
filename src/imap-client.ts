@@ -63,6 +63,10 @@ export interface MailboxInfo {
   uidnext: number;
 }
 
+export interface MoveMessageResult {
+  destinationUid?: number;
+}
+
 export class IMAPClient extends EventEmitter {
   private imap: Imap | null = null;
   private config: IMAPConfig;
@@ -515,6 +519,68 @@ export class IMAPClient extends EventEmitter {
           resolve();
         });
       });
+    });
+  }
+
+  async moveMessage(uid: number, targetMailbox: string): Promise<MoveMessageResult> {
+    if (!this.imap) {
+      throw new Error('Not connected to IMAP server');
+    }
+    if (!this.currentBox) {
+      throw new Error('No source mailbox is currently open');
+    }
+    const sourceMailbox = this.currentBox;
+    if (!Number.isSafeInteger(uid) || uid <= 0) {
+      throw new Error('Message UID must be a positive integer');
+    }
+
+    const normalizedTarget = targetMailbox.trim();
+    if (!normalizedTarget) {
+      throw new Error('Target mailbox must be a non-empty string');
+    }
+
+    const bothInbox = sourceMailbox.toUpperCase() === 'INBOX' && normalizedTarget.toUpperCase() === 'INBOX';
+    if (sourceMailbox === normalizedTarget || bothInbox) {
+      throw new Error('Target mailbox must be different from the source mailbox');
+    }
+
+    type MoveCallback = (error: Error | null, newUIDs?: number | string) => void;
+    const move = this.imap.move.bind(this.imap) as unknown as (
+      source: number,
+      mailboxName: string,
+      callback: MoveCallback
+    ) => void;
+
+    return new Promise((resolve, reject) => {
+      try {
+        move(uid, normalizedTarget, (error, newUIDs) => {
+          if (error) {
+            console.error(
+              `[IMAP] Failed to move message ${sourceMailbox}/UID ${uid} to ${normalizedTarget}:`,
+              error.message
+            );
+            reject(new Error(`IMAP MOVE failed: ${error.message}`));
+            return;
+          }
+
+          const numericUid = typeof newUIDs === 'string' && /^\d+$/.test(newUIDs)
+            ? Number(newUIDs)
+            : newUIDs;
+          const destinationUid = typeof numericUid === 'number'
+            && Number.isSafeInteger(numericUid)
+            && numericUid > 0
+            ? numericUid
+            : undefined;
+
+          console.error(
+            `[IMAP] Moved message ${sourceMailbox}/UID ${uid} to ${normalizedTarget}`
+            + (destinationUid ? `/UID ${destinationUid}` : '')
+          );
+          resolve(destinationUid === undefined ? {} : { destinationUid });
+        });
+      } catch (error) {
+        reject(new Error(`IMAP MOVE failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
     });
   }
 

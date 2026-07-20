@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.3] - 2026-07-20
+
+### Added
+- 新增 `move_message`，支持通过邮箱范围内的邮件引用将邮件移动到已存在的目标文件夹，并可校验 UIDVALIDITY
+- `send_email` 和 `reply_to_email` 新增可选的纯文本与 HTML 签名
+
+### Improved
+- IMAP 服务器提供目标 UID 时随移动结果返回；未提供时返回重新搜索目标邮箱的提示
+- 回复签名位于新正文之后、原邮件引用之前，同时保留 text/plain 与 text/html 两种邮件正文格式
+- 校验移动目标，拒绝将邮件移动到当前所在邮箱
+
+### Documentation
+- 重构中英文 README，突出使用场景、快速配置、工具能力分组和精简版本说明
+- 更新 Claude Desktop、Cursor、Claude Code 和 Codex 配置示例，并明确当前认证方式和 SMTP TLS 限制
+
 ## [1.2.2] - 2026-07-20
 
 ### Breaking Changes

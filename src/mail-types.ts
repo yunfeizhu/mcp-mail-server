@@ -46,12 +46,18 @@ export interface ReplyInfo {
   };
 }
 
+export interface EmailSignature {
+  text?: string;
+  html?: string;
+}
+
 export interface ReplyToEmailArgs {
   originalUid: number;
   mailbox: string;
   uidValidity?: number;
   text?: string;
   html?: string;
+  signature?: EmailSignature;
   replyToAll?: boolean;
   includeOriginal?: boolean;
 }
@@ -68,6 +74,7 @@ export interface SendEmailArgs {
   subject: string;
   text?: string;
   html?: string;
+  signature?: EmailSignature;
   cc?: string;
   bcc?: string;
   attachments?: string[];

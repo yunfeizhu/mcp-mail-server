@@ -416,6 +416,27 @@ export const MAIL_TOOLS: Tool[] = [
                   type: 'string',
                   description: 'HTML email body (optional)',
                 },
+                signature: {
+                  type: 'object',
+                  description: 'Optional signature appended after the email body. Provide text, html, or both.',
+                  properties: {
+                    text: {
+                      type: 'string',
+                      minLength: 1,
+                      description: 'Plain text signature',
+                    },
+                    html: {
+                      type: 'string',
+                      minLength: 1,
+                      description: 'HTML signature',
+                    },
+                  },
+                  anyOf: [
+                    { required: ['text'] },
+                    { required: ['html'] },
+                  ],
+                  additionalProperties: false,
+                },
                 cc: {
                   type: 'string',
                   description: 'CC recipients, comma-separated (optional)',
@@ -467,6 +488,27 @@ export const MAIL_TOOLS: Tool[] = [
                   type: 'string',
                   description: 'Reply message HTML (optional)',
                 },
+                signature: {
+                  type: 'object',
+                  description: 'Optional signature appended after the reply body and before the quoted original message. Provide text, html, or both.',
+                  properties: {
+                    text: {
+                      type: 'string',
+                      minLength: 1,
+                      description: 'Plain text signature',
+                    },
+                    html: {
+                      type: 'string',
+                      minLength: 1,
+                      description: 'HTML signature',
+                    },
+                  },
+                  anyOf: [
+                    { required: ['text'] },
+                    { required: ['html'] },
+                  ],
+                  additionalProperties: false,
+                },
                 replyToAll: {
                   type: 'boolean',
                   description: 'Reply to all recipients instead of just sender (default: false)',
@@ -482,6 +524,40 @@ export const MAIL_TOOLS: Tool[] = [
             },
           },
           // === 邮件管理 ===
+          {
+            name: 'move_message',
+            description: 'Move a message from one existing mailbox to another. The source mailbox is required because IMAP UIDs are only unique within a mailbox.',
+            annotations: {
+              readOnlyHint: false,
+              destructiveHint: true,
+              idempotentHint: false,
+              openWorldHint: false,
+            },
+            inputSchema: {
+              type: 'object',
+              properties: {
+                mailbox: {
+                  type: 'string',
+                  description: 'Source mailbox containing the message, as returned in sourceMailbox'
+                },
+                uidValidity: {
+                  type: 'number',
+                  description: 'Optional UIDVALIDITY returned with the source message reference',
+                  minimum: 1
+                },
+                uid: {
+                  type: 'number',
+                  description: 'UID of the message in the source mailbox',
+                  minimum: 1
+                },
+                targetMailbox: {
+                  type: 'string',
+                  description: 'Existing destination mailbox name, as returned by list_mailboxes'
+                },
+              },
+              required: ['mailbox', 'uid', 'targetMailbox'],
+            },
+          },
           {
             name: 'delete_message',
             description: 'Delete a specific email message by mailbox and UID. Auto-connects if not already connected.',

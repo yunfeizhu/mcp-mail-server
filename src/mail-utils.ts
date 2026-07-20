@@ -1,3 +1,10 @@
+import type { EmailSignature } from './mail-types.js';
+
+export interface MailContent {
+  text?: string;
+  html?: string;
+}
+
 export function extractEmailFromAddress(addressField: any): string | null {
   if (!addressField) return null;
 
@@ -69,4 +76,56 @@ export function buildQuotedHtml(originalContent: string, date: string, from: str
 
 export function textToHtml(text: string): string {
   return escapeHtml(text).replace(/\n/g, '<br>').replace(/  /g, '&nbsp;&nbsp;');
+}
+
+export function appendSignature(
+  text: string | undefined,
+  html: string | undefined,
+  signature?: EmailSignature
+): MailContent {
+  const signatureText = typeof signature?.text === 'string' && signature.text.trim()
+    ? signature.text
+    : undefined;
+  const signatureHtml = typeof signature?.html === 'string' && signature.html.trim()
+    ? signature.html
+    : undefined;
+
+  if (!signatureText && !signatureHtml) {
+    return { text, html };
+  }
+
+  const finalText = text && signatureText
+    ? `${text}\n\n${signatureText}`
+    : text;
+
+  let finalHtml = html;
+  const htmlSignature = signatureHtml || (signatureText ? textToHtml(signatureText) : undefined);
+  if (htmlSignature) {
+    if (html) {
+      finalHtml = `${html}<br><br><div class="mcp-mail-signature">${htmlSignature}</div>`;
+    } else if (text && signatureHtml) {
+      finalHtml = `${textToHtml(text)}<br><br><div class="mcp-mail-signature">${signatureHtml}</div>`;
+    }
+  }
+
+  return { text: finalText, html: finalHtml };
+}
+
+export function appendQuotedOriginal(
+  content: MailContent,
+  originalText: string | undefined,
+  originalHtml: string | undefined,
+  date: string,
+  from: string
+): MailContent {
+  const quotedText = buildQuotedText(originalText || '', date, from);
+  const finalText = `${content.text || ''}\n\n${quotedText}`;
+
+  let finalHtml = content.html;
+  if (content.html || originalHtml) {
+    const quotedHtml = buildQuotedHtml(originalText || originalHtml || '', date, from);
+    finalHtml = `${content.html || textToHtml(content.text || '')}<br><br>${quotedHtml}`;
+  }
+
+  return { text: finalText, html: finalHtml };
 }

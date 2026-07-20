@@ -26,16 +26,33 @@ test('stdio server initializes and exposes mailbox-scoped message tools', async 
 
   try {
     await client.connect(transport);
-    assert.equal(client.getServerVersion()?.version, '1.2.2');
+    assert.equal(client.getServerVersion()?.version, '1.2.3');
     const result = await client.listTools();
-    assert.equal(result.tools.length, 24);
+    assert.equal(result.tools.length, 25);
 
     const getMessage = result.tools.find(tool => tool.name === 'get_message');
     const deleteMessage = result.tools.find(tool => tool.name === 'delete_message');
+    const moveMessage = result.tools.find(tool => tool.name === 'move_message');
+    const sendEmail = result.tools.find(tool => tool.name === 'send_email');
+    const replyToEmail = result.tools.find(tool => tool.name === 'reply_to_email');
     assert.ok(getMessage);
     assert.ok(deleteMessage);
+    assert.ok(moveMessage);
+    assert.ok(sendEmail);
+    assert.ok(replyToEmail);
     assert.deepEqual(getMessage.inputSchema.required, ['mailbox', 'uid']);
     assert.deepEqual(deleteMessage.inputSchema.required, ['mailbox', 'uid']);
+    assert.deepEqual(moveMessage.inputSchema.required, ['mailbox', 'uid', 'targetMailbox']);
+    assert.equal(moveMessage.annotations.destructiveHint, true);
+    assert.deepEqual(sendEmail.inputSchema.properties.signature.anyOf, [
+      { required: ['text'] },
+      { required: ['html'] },
+    ]);
+    assert.equal(sendEmail.inputSchema.properties.signature.additionalProperties, false);
+    assert.deepEqual(replyToEmail.inputSchema.properties.signature.anyOf, [
+      { required: ['text'] },
+      { required: ['html'] },
+    ]);
   } finally {
     await client.close();
   }

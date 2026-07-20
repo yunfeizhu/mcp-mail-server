@@ -1,59 +1,62 @@
+<div align="center">
+
 # MCP Mail Server
 
-![NPM Version](https://img.shields.io/npm/v/mcp-mail-server)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+**Give your AI assistant a local bridge to your email.**
 
-**Language:** English | [中文](README-zh.md)
+Search, read, organize, reply to, and send email through any standards-based IMAP/SMTP account—from Claude, Cursor, Codex, and other MCP clients.
 
-A Model Context Protocol server for IMAP/SMTP email operations with Claude, Cursor, and other AI assistants.
+[![npm version](https://img.shields.io/npm/v/mcp-mail-server?logo=npm&color=CB3837)](https://www.npmjs.com/package/mcp-mail-server)
+[![npm downloads](https://img.shields.io/npm/dm/mcp-mail-server?logo=npm&color=CB3837)](https://www.npmjs.com/package/mcp-mail-server)
+[![Node.js](https://img.shields.io/node/v/mcp-mail-server?logo=node.js&color=339933)](https://www.npmjs.com/package/mcp-mail-server)
+[![License: MIT](https://img.shields.io/npm/l/mcp-mail-server?color=blue)](LICENSE)
 
-## Features
+**English** · [简体中文](README-zh.md)
 
-- **IMAP Operations**: Search, read, and manage emails across mailboxes
-- **SMTP Support**: Send emails with HTML/text content and attachments  
-- **Attachment Management**: View attachment metadata and save attachments to local files
-- **Secure Configuration**: Environment-based setup with TLS/SSL support
-- **AI-Friendly**: Natural language commands for email operations
-- **Auto Connection Management**: Automatic IMAP/SMTP connection handling
-- **Multi-Mailbox Support**: Access INBOX, Sent, and custom folders
+[Why this server](#why-this-server) · [Quick start](#quick-start) · [Client setup](#client-setup) · [Tools](#tools-at-a-glance) · [Configuration](#configuration) · [Development](#development)
 
-## Changelog
+</div>
 
-### [1.2.2] - 2026-07-20
+> “Find the unread messages from Alice this week, summarize them, and move the finished thread to Archive.”
 
-**Breaking Changes**
-- Message-specific tools now require `mailbox` alongside UID and return `sourceMailbox` plus `uidValidity`
-- Local attachment reads and writes now require an explicit `MAIL_ALLOWED_ROOTS` allowlist
+## Why this server?
 
-**Security**
-- Enabled IMAP certificate verification by default and added canonical-path and payload-size limits
-- Upgraded the MCP SDK, Nodemailer, Mailparser, Rollup, and transitive dependencies; removed the vulnerable minification plugin
+| | |
+|---|---|
+| **🔎 Find what matters**<br>Search across folders by sender, recipient, subject, body, date, read state, and reply state. | **✉️ Act without leaving the conversation**<br>Read, send, reply, move, and delete messages using natural language. |
+| **📎 Work with attachments**<br>Inspect metadata, download files, and send local attachments through explicit filesystem allowlists. | **🔐 Keep control**<br>Run locally, connect directly to your mail provider, verify TLS certificates, and enforce payload limits. |
 
-**Fixed**
-- Serialized stateful IMAP tool calls and fixed sent-folder state drift, SMTP initialization cleanup, read-only `markSeen`, reply threading, and unreplied-message ordering
-- Preserved attachments and threading headers in sent-folder MIME copies
+## What can I ask?
 
-**Added**
-- Split the monolithic entry point into MCP orchestration, connection management, search services, tool definitions, shared types, and utilities
-- Added browser-based tool testing through `npm run dev:inspector` and expanded automated regression coverage
-
-For the full version history, see [CHANGELOG.md](CHANGELOG.md).
-
----
+| Goal | Example prompt |
+|---|---|
+| Catch up | “Summarize my unread email from today.” |
+| Find a message | “Find messages from finance@example.com about the Q3 budget.” |
+| Organize the inbox | “Move the completed thread from INBOX to Archive.” |
+| Reply with context | “Reply to the latest message from Alex and keep it in the same thread.” |
+| Handle files | “Save the PDF attachment from that message to my Downloads folder.” |
+| Send polished email | “Send the project update with my text and HTML signature.” |
 
 ## Quick Start
 
-1. **Install**: `npm install -g mcp-mail-server`
-2. **Configure** environment variables (see [Configuration](#configuration))
-3. **Add** to your MCP client configuration
-4. **Use** natural language: *"Show me unread emails from today"*
+> [!IMPORTANT]
+> Enable IMAP and SMTP for your account before starting. This server currently supports password or app-password authentication; OAuth2 is not yet supported.
 
-## Installation
+1. **Prepare** your IMAP/SMTP server details and an app password where supported.
+2. **Add** the server to your MCP client using one of the configurations below.
+3. **Restart or reconnect** the client, then ask: *“Show me unread emails from today.”*
+
+All examples use `npx -y mcp-mail-server`, so there is nothing to install globally.
+
+## Client setup
 
 <details>
 <summary>Claude Desktop</summary>
 
-Add to your `claude_desktop_config.json`:
+Open **Settings > Developer > Edit Config** and add the server to `claude_desktop_config.json`:
+
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
@@ -69,19 +72,24 @@ Add to your `claude_desktop_config.json`:
         "SMTP_PORT": "465",
         "SMTP_SECURE": "true",
         "EMAIL_USER": "your-email@domain.com",
-        "EMAIL_PASS": "your-password"
+        "EMAIL_PASS": "your-app-password"
       }
     }
   }
 }
 ```
+
+Save the file, completely quit Claude Desktop, and start it again. See the [official local MCP server guide](https://modelcontextprotocol.io/docs/develop/connect-local-servers) for current client instructions.
 
 </details>
 
 <details>
 <summary>Cursor</summary>
 
-Add to your Cursor MCP settings:
+Add the server to one of Cursor's MCP configuration files:
+
+- Project: `.cursor/mcp.json`
+- Global: `~/.cursor/mcp.json`
 
 ```json
 {
@@ -97,147 +105,108 @@ Add to your Cursor MCP settings:
         "SMTP_PORT": "465",
         "SMTP_SECURE": "true",
         "EMAIL_USER": "your-email@domain.com",
-        "EMAIL_PASS": "your-password"
+        "EMAIL_PASS": "your-app-password"
       }
     }
   }
 }
 ```
+
+See the [Cursor MCP documentation](https://docs.cursor.com/context/model-context-protocol) for current configuration locations and behavior.
 
 </details>
 
 <details>
 <summary>Claude Code</summary>
 
-Add using the `claude mcp add` command:
+Add the server at user scope so it is available across projects:
 
 ```bash
-claude mcp add mcp-mail-server \
-  -e IMAP_HOST=your-imap-server.com \
-  -e IMAP_PORT=993 \
-  -e IMAP_SECURE=true \
-  -e SMTP_HOST=your-smtp-server.com \
-  -e SMTP_PORT=465 \
-  -e SMTP_SECURE=true \
-  -e EMAIL_USER=your-email@domain.com \
-  -e EMAIL_PASS=your-password \
+claude mcp add \
+  --scope user \
+  --env IMAP_HOST=your-imap-server.com \
+  --env IMAP_PORT=993 \
+  --env IMAP_SECURE=true \
+  --env SMTP_HOST=your-smtp-server.com \
+  --env SMTP_PORT=465 \
+  --env SMTP_SECURE=true \
+  --env EMAIL_USER=your-email@domain.com \
+  --env EMAIL_PASS=your-app-password \
+  --transport stdio \
+  mcp-mail-server \
   -- npx -y mcp-mail-server
 ```
 
-Or manually add to `.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "mcp-mail-server": {
-      "command": "npx",
-      "args": ["-y", "mcp-mail-server"],
-      "env": {
-        "IMAP_HOST": "your-imap-server.com",
-        "IMAP_PORT": "993",
-        "IMAP_SECURE": "true",
-        "SMTP_HOST": "your-smtp-server.com",
-        "SMTP_PORT": "465",
-        "SMTP_SECURE": "true",
-        "EMAIL_USER": "your-email@domain.com",
-        "EMAIL_PASS": "your-password"
-      }
-    }
-  }
-}
-```
+Use `--scope local` for the current project only (the default), or `--scope project` to create a shared `.mcp.json` in the project root. Claude Code does not read MCP servers from `.claude/settings.json`. Run `claude mcp get mcp-mail-server` or use `/mcp` inside Claude Code to verify the connection. See the [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp) for scope and configuration details.
 
 </details>
 
 <details>
 <summary>OpenAI Codex</summary>
 
-Add to `codex.json` in your project root:
+Add the server with the Codex CLI:
 
-```json
-{
-  "mcpServers": {
-    "mcp-mail-server": {
-      "command": "npx",
-      "args": ["-y", "mcp-mail-server"],
-      "env": {
-        "IMAP_HOST": "your-imap-server.com",
-        "IMAP_PORT": "993",
-        "IMAP_SECURE": "true",
-        "SMTP_HOST": "your-smtp-server.com",
-        "SMTP_PORT": "465",
-        "SMTP_SECURE": "true",
-        "EMAIL_USER": "your-email@domain.com",
-        "EMAIL_PASS": "your-password"
-      }
-    }
-  }
-}
+```bash
+codex mcp add mcp-mail-server \
+  --env IMAP_HOST=your-imap-server.com \
+  --env IMAP_PORT=993 \
+  --env IMAP_SECURE=true \
+  --env SMTP_HOST=your-smtp-server.com \
+  --env SMTP_PORT=465 \
+  --env SMTP_SECURE=true \
+  --env EMAIL_USER=your-email@domain.com \
+  --env EMAIL_PASS=your-app-password \
+  -- npx -y mcp-mail-server
 ```
+
+Codex stores user configuration in `~/.codex/config.toml`. For a trusted project-only configuration, use `.codex/config.toml`:
+
+```toml
+[mcp_servers.mcp-mail-server]
+command = "npx"
+args = ["-y", "mcp-mail-server"]
+env_vars = [
+  "IMAP_HOST",
+  "IMAP_PORT",
+  "IMAP_SECURE",
+  "SMTP_HOST",
+  "SMTP_PORT",
+  "SMTP_SECURE",
+  "EMAIL_USER",
+  "EMAIL_PASS"
+]
+```
+
+Export those variables before starting Codex. The ChatGPT desktop app, Codex CLI, and Codex IDE extension share this configuration. See the [Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp) for current options.
 
 </details>
 
 <details>
 <summary>Other MCP Clients</summary>
 
-Other MCP clients can be configured similarly. The core configuration is:
+Use your client's current MCP configuration format and register a local **STDIO** server with:
 
-```json
-{
-  "mcpServers": {
-    "mcp-mail-server": {
-      "command": "npx",
-      "args": ["-y", "mcp-mail-server"],
-      "env": {
-        "IMAP_HOST": "your-imap-server.com",
-        "IMAP_PORT": "993",
-        "IMAP_SECURE": "true",
-        "SMTP_HOST": "your-smtp-server.com",
-        "SMTP_PORT": "465",
-        "SMTP_SECURE": "true",
-        "EMAIL_USER": "your-email@domain.com",
-        "EMAIL_PASS": "your-password"
-      }
-    }
-  }
-}
-```
+- Command: `npx`
+- Arguments: `-y`, `mcp-mail-server`
+- Environment: the required IMAP, SMTP, and account variables listed under [Configuration](#configuration)
 
-Refer to your specific client's documentation for the appropriate configuration file location.
+Configuration file names and schemas are client-specific; do not assume every client accepts the `mcpServers` JSON format.
 
 </details>
 
-## Available Tools
+## Tools at a glance
 
-| Tool | Description |
-|------|-------------|
-| `connect_all` | Connect to both IMAP and SMTP servers |
-| `get_connection_status` | Check connection status and server info |
-| `disconnect_all` | Disconnect from all servers |
-| `open_mailbox` | Open specific mailbox/folder |
-| `list_mailboxes` | List available mail folders |
-| `get_message_count` | Get total message count in current mailbox |
-| `get_unseen_messages` | Get all unread emails |
-| `get_recent_messages` | Get recent emails |
-| `search_by_sender` | Find emails from specific sender |
-| `search_by_subject` | Search by subject keywords |
-| `search_by_recipient` | Find emails sent to specific recipient |
-| `search_by_body` | Search message body content |
-| `search_since_date` | Find emails since date |
-| `search_unread_from_sender` | Find unread emails from specific sender |
-| `search_unreplied_from_sender` | Find unreplied emails from specific sender |
-| `search_with_keyword` | Search emails by keyword/flag |
-| `search_all_messages` | Search all messages with optional date range and limit |
-| `get_message` | Retrieve email by UID |
-| `get_messages` | Retrieve multiple emails |
-| `delete_message` | Delete email by UID |
-| `send_email` | Send email via SMTP (with optional attachments) |
-| `reply_to_email` | Reply to specific email |
-| `get_attachments` | Get attachment metadata for an email |
-| `save_attachment` | Download and save attachments to local files |
+| Capability | Tools |
+|---|---|
+| Connection | `connect_all`, `get_connection_status`, `disconnect_all` |
+| Mailboxes | `open_mailbox`, `list_mailboxes`, `get_message_count` |
+| Search | `get_unseen_messages`, `get_recent_messages`, `search_by_sender`, `search_by_subject`, `search_by_recipient`, `search_by_body`, `search_since_date`, `search_unread_from_sender`, `search_unreplied_from_sender`, `search_with_keyword`, `search_all_messages` |
+| Messages | `get_message`, `get_messages`, `move_message`, `delete_message` |
+| Compose | `send_email`, `reply_to_email` |
+| Attachments | `get_attachments`, `save_attachment` |
 
 <details>
-<summary>Detailed Tool Parameters</summary>
+<summary>View the complete tool reference</summary>
 
 ### Connection Management
 - **connect_all**: No parameters required
@@ -265,49 +234,20 @@ Refer to your specific client's documentation for the appropriate configuration 
 - **get_recent_messages**: No parameters required
 - **get_message**: `mailbox` (string), `uid` (number), `uidValidity` (number, optional), `markSeen` (boolean, optional)
 - **get_messages**: `mailbox` (string), `uids` (array), `uidValidity` (number, optional), `markSeen` (boolean, optional)
+- **move_message**: `mailbox` (string), `uid` (number), `targetMailbox` (string), `uidValidity` (number, optional). The target mailbox must already exist.
 - **delete_message**: `mailbox` (string), `uid` (number), `uidValidity` (number, optional)
 
 ### Email Sending
-- **send_email**: `to` (string), `subject` (string), `text` (string, optional), `html` (string, optional), `cc` (string, optional), `bcc` (string, optional), `attachments` (string[], optional, absolute file paths)
-- **reply_to_email**: `mailbox` (string), `originalUid` (number), `uidValidity` (number, optional), `text` (string), `html` (string, optional), `replyToAll` (boolean, optional), `includeOriginal` (boolean, optional)
+- **send_email**: `to` (string), `subject` (string), `text` (string, optional), `html` (string, optional), `signature` (object, optional: `text` and/or `html`), `cc` (string, optional), `bcc` (string, optional), `attachments` (string[], optional, absolute file paths)
+- **reply_to_email**: `mailbox` (string), `originalUid` (number), `uidValidity` (number, optional), `text` (string), `html` (string, optional), `signature` (object, optional: `text` and/or `html`), `replyToAll` (boolean, optional), `includeOriginal` (boolean, optional)
+
+Signatures are appended after the new message body. In replies, the signature is placed before the quoted original message. Provide both `signature.text` and `signature.html` for the best compatibility across mail clients; HTML signatures are treated as trusted email markup.
 
 ### Attachment Operations
 - **get_attachments**: `mailbox` (string), `uid` (number), `uidValidity` (number, optional) — Returns metadata: filename, contentType, size, index
 - **save_attachment**: `mailbox` (string), `uid` (number), `uidValidity` (number, optional), `savePath` (string, absolute path), `attachmentIndex` (number, optional, 0-based), `returnBase64` (boolean, optional, default: false)
 
 </details>
-
-
-## Usage Examples
-
-Use natural language commands with your AI assistant:
-
-### Basic Operations
-- *"Connect to my email servers"*
-- *"Show me all unread emails"*  
-- *"Search for emails from boss@company.com"*
-- *"Send an email to team@company.com about the meeting"*
-- *"Reply to email with UID 123"*
-
-### Advanced Searches
-- *"Find emails with 'urgent' in the subject from last week"*
-- *"Show me unreplied emails from boss@company.com"*
-- *"Search emails sent to team@company.com"*
-- *"Get all emails from the Sales folder"*
-- *"Show unread emails from boss@company.com"*
-- *"Show me all emails from the last 7 days"*
-- *"List all messages, limit to 20"*
-
-### Email Management  
-- *"Delete the email with UID 123"*
-- *"Mark recent emails as read"*
-- *"List all my email folders"*
-
-### Attachment Operations
-- *"Show me the attachments of email UID 456"*
-- *"Save all attachments from email UID 456 to D:/Downloads"*
-- *"Download the first attachment from email UID 789"*
-- *"Send an email to team@company.com with attachment D:/report.pdf"*
 
 ## Configuration
 
@@ -322,7 +262,7 @@ Use natural language commands with your AI assistant:
 | `IMAP_SECURE` | Enable TLS | `true` |
 | `SMTP_HOST` | SMTP server address | `smtp.gmail.com` |
 | `SMTP_PORT` | SMTP port number | `465` |
-| `SMTP_SECURE` | Enable SSL | `true` |
+| `SMTP_SECURE` | Use implicit TLS, normally `true` for port 465 and `false` for STARTTLS on port 587 | `true` |
 | `EMAIL_USER` | Email username | `your-email@gmail.com` |
 | `EMAIL_PASS` | Email password/app password | `your-app-password` |
 | `IMAP_TLS_REJECT_UNAUTHORIZED` | Verify the IMAP TLS certificate; defaults to `true` | `true` |
@@ -350,31 +290,25 @@ EMAIL_USER=your-email@gmail.com
 EMAIL_PASS=your-app-password
 ```
 
-**Note**: Use [App Passwords](https://support.google.com/accounts/answer/185833) instead of your regular password.
+**Note**: This server currently supports password-based authentication, not OAuth2. A regular Google account password will not work; use an [App Password](https://support.google.com/accounts/answer/185833) if your account permits one. Google recommends OAuth-based sign-in, and managed accounts may disable app passwords.
 
 </details>
 
 <details>
-<summary>Outlook/Hotmail Configuration</summary>
+<summary>Outlook/Hotmail (not currently supported)</summary>
 
-```bash
-IMAP_HOST=outlook.office365.com
-IMAP_PORT=993
-IMAP_SECURE=true
-SMTP_HOST=smtp.office365.com
-SMTP_PORT=587
-SMTP_SECURE=true
-EMAIL_USER=your-email@outlook.com
-EMAIL_PASS=your-password
-```
+Outlook.com and Exchange Online require OAuth2/Modern Authentication for IMAP and SMTP. This server currently accepts only a username and password, so Outlook/Hotmail accounts are not currently supported.
+
+Outlook SMTP also uses STARTTLS on port 587, which would require `SMTP_SECURE=false`; changing that flag alone does not solve the OAuth requirement. See [Microsoft's current IMAP and SMTP settings](https://support.microsoft.com/en-US/Outlook/pop-imap-and-smtp-settings-for-outlook-com).
 
 </details>
 
 ### Security Notes
 
-- **Use App Passwords**: Enable 2FA and use app-specific passwords when available
-- **TLS/SSL Required**: Always use secure connections (IMAP_SECURE=true, SMTP_SECURE=true)
-- **Environment Variables**: Never hardcode credentials in configuration files
+- **Authentication limitation**: This server currently supports password or app-password authentication only, not OAuth2
+- **Use app passwords where supported**: Never use your primary account password when a provider offers a scoped app password
+- **Match the SMTP security mode to the port**: Use `SMTP_SECURE=true` for implicit TLS (normally port 465) and `false` for STARTTLS (normally port 587)
+- **Protect stored credentials**: MCP clients may save `EMAIL_PASS` in their local configuration. Restrict file permissions and never commit credentials to version control
 
 ## Development
 
@@ -406,7 +340,7 @@ EMAIL_PASS=your-password
    export SMTP_PORT=465
    export SMTP_SECURE=true
    export EMAIL_USER=your-email@domain.com
-   export EMAIL_PASS=your-password
+   export EMAIL_PASS=your-app-password
    ```
 
 5. **Run the server**:
@@ -435,18 +369,42 @@ Click **Connect**, open **Tools**, and call `connect_all` and `get_connection_st
 
 The current MCP Inspector requires Node.js 22. This affects only the interactive development UI; the MCP server itself continues to support Node.js 18+.
 
+## Release notes
+
+<details>
+<summary><strong>v1.2.3</strong> — move messages, add signatures, and get started faster</summary>
+
+**Added**
+
+- Added `move_message` to move a mailbox-scoped message into an existing target mailbox.
+- Added optional plain-text and HTML signatures to `send_email` and `reply_to_email`.
+
+**Improved**
+
+- Return the destination UID after a move when the IMAP server provides it, with a refresh hint otherwise.
+- Place reply signatures after the new content and before the quoted original while preserving MIME alternatives.
+- Validate move targets and reject moves into the current mailbox.
+
+**Documentation**
+
+- Redesigned the README around common workflows, a shorter quick start, grouped tools, and clearer client configuration.
+
+</details>
+
+See [CHANGELOG.md](CHANGELOG.md) for the complete version history.
+
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Bug reports, feature ideas, and pull requests are welcome. Start with the [issue tracker](https://github.com/yunfeizhu/mcp-mail-server/issues) or open a pull request directly.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+Released under the [MIT License](LICENSE).
 
 ---
 
-**Package Information:**
-- Package: `mcp-mail-server`
-- Node.js: ≥18.0.0
-- Repository: [GitHub](https://github.com/yunfeizhu/mcp-mail-server)
-- Issues: [Report bugs](https://github.com/yunfeizhu/mcp-mail-server/issues)
+<div align="center">
+
+[npm](https://www.npmjs.com/package/mcp-mail-server) · [GitHub](https://github.com/yunfeizhu/mcp-mail-server) · [Issues](https://github.com/yunfeizhu/mcp-mail-server/issues) · [Changelog](CHANGELOG.md)
+
+</div>

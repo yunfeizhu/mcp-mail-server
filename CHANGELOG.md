@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.3] - 2026-07-20
+
+### Added
+- Added `move_message` to move a mailbox-scoped message to an existing target mailbox, with optional UIDVALIDITY validation
+- Added optional plain-text and HTML signatures to `send_email` and `reply_to_email`
+
+### Improved
+- Return the destination UID after a move when the IMAP server provides it, with a refresh hint when it does not
+- Place reply signatures after the new message body and before the quoted original, while preserving text/plain and text/html alternatives
+- Validate move targets and reject attempts to move a message into its current mailbox
+
+### Documentation
+- Redesigned the English and Chinese READMEs around use cases, quick setup, grouped tool capabilities, and compact release notes
+- Updated Claude Desktop, Cursor, Claude Code, and Codex configuration examples and clarified current authentication and SMTP TLS limitations
+
 ## [1.2.2] - 2026-07-20
 
 ### Breaking Changes

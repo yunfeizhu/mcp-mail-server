@@ -6,7 +6,9 @@ import test from 'node:test';
 
 import { SerialTaskQueue } from '../dist/async-queue.js';
 import { FileAccessPolicy } from '../dist/file-access-policy.js';
-import { parseMessageRef } from '../dist/message-ref.js';
+import { IMAPClient } from '../dist/imap-client.js';
+import { appendQuotedOriginal, appendSignature } from '../dist/mail-utils.js';
+import { parseMessageRef, parseMoveMessageRef } from '../dist/message-ref.js';
 import { isPathInsideRoot } from '../dist/path-policy.js';
 import { MailSearchService } from '../dist/search-service.js';
 import { SMTPClient } from '../dist/smtp-client.js';
@@ -45,6 +47,64 @@ test('parseMessageRef requires a mailbox-scoped positive UID', () => {
   assert.throws(() => parseMessageRef({ mailbox: 'INBOX', uid: 0 }), /positive integer/);
 });
 
+test('parseMoveMessageRef requires distinct source and target mailboxes', () => {
+  assert.deepEqual(
+    parseMoveMessageRef({ mailbox: 'INBOX', uid: 42, uidValidity: 7, targetMailbox: 'Archive' }),
+    { mailbox: 'INBOX', uid: 42, uidValidity: 7, targetMailbox: 'Archive' }
+  );
+  assert.throws(
+    () => parseMoveMessageRef({ mailbox: 'INBOX', uid: 42, targetMailbox: '' }),
+    /targetMailbox/
+  );
+  assert.throws(
+    () => parseMoveMessageRef({ mailbox: 'INBOX', uid: 42, targetMailbox: 'inbox' }),
+    /different/
+  );
+  assert.throws(
+    () => parseMoveMessageRef({ uid: 42, targetMailbox: 'Archive' }),
+    /mailbox/
+  );
+});
+
+test('IMAPClient moves the selected UID and returns a destination UID when available', async () => {
+  const client = new IMAPClient({
+    host: 'imap.example.com',
+    port: 993,
+    username: 'sender@example.com',
+    password: 'not-used',
+  });
+  client.currentBox = 'INBOX';
+  client.imap = {
+    move(uid, targetMailbox, callback) {
+      assert.equal(uid, 42);
+      assert.equal(targetMailbox, 'Archive');
+      callback(null, '108');
+    },
+  };
+
+  assert.deepEqual(
+    await client.moveMessage(42, 'Archive'),
+    { destinationUid: 108 }
+  );
+
+  client.imap = {
+    move(_uid, _targetMailbox, callback) {
+      callback(null);
+    },
+  };
+  assert.deepEqual(await client.moveMessage(42, 'Archive'), {});
+
+  client.imap = {
+    move(_uid, _targetMailbox, callback) {
+      callback(new Error('Mailbox does not exist'));
+    },
+  };
+  await assert.rejects(
+    () => client.moveMessage(42, 'Archive'),
+    /IMAP MOVE failed: Mailbox does not exist/
+  );
+});
+
 test('path policy rejects sibling-prefix escapes', () => {
   assert.equal(isPathInsideRoot('/allowed/root/file.txt', '/allowed/root'), true);
   assert.equal(isPathInsideRoot('/allowed/root', '/allowed/root'), true);
@@ -80,6 +140,47 @@ test('FileAccessPolicy enforces roots and size limits', async () => {
   }
 });
 
+test('appendSignature composes plain text and HTML alternatives safely', () => {
+  assert.deepEqual(
+    appendSignature('Hello', '<p>Hello</p>'),
+    { text: 'Hello', html: '<p>Hello</p>' }
+  );
+
+  assert.deepEqual(
+    appendSignature('Hello', '<p>Hello</p>', { text: 'Regards,\nA < B' }),
+    {
+      text: 'Hello\n\nRegards,\nA < B',
+      html: '<p>Hello</p><br><br><div class="mcp-mail-signature">Regards,<br>A &lt; B</div>',
+    }
+  );
+
+  assert.deepEqual(
+    appendSignature('Hello', undefined, { html: '<strong>Sender</strong>' }),
+    {
+      text: 'Hello',
+      html: 'Hello<br><br><div class="mcp-mail-signature"><strong>Sender</strong></div>',
+    }
+  );
+});
+
+test('reply composition places the signature before the quoted original', () => {
+  const signedReply = appendSignature('Thanks', '<p>Thanks</p>', {
+    text: 'Regards,\nSender',
+    html: '<p>Regards,<br>Sender</p>',
+  });
+  const reply = appendQuotedOriginal(
+    signedReply,
+    'Earlier message',
+    '<p>Earlier message</p>',
+    '2026-07-20',
+    'author@example.com'
+  );
+
+  assert.ok(reply.text.indexOf('Thanks') < reply.text.indexOf('Regards'));
+  assert.ok(reply.text.indexOf('Regards') < reply.text.indexOf('On 2026-07-20'));
+  assert.ok(reply.html.indexOf('mcp-mail-signature') < reply.html.indexOf('border-left'));
+});
+
 test('raw sent copy preserves attachments and reply threading headers', async () => {
   const client = new SMTPClient({
     host: 'smtp.example.com',
@@ -107,6 +208,31 @@ test('raw sent copy preserves attachments and reply threading headers', async ()
   assert.match(message, /References: <root@example\.com> <original@example\.com>/i);
   assert.match(message, /filename=evidence\.txt/i);
   assert.match(message, /YXR0YWNobWVudC1jb250ZW50/);
+});
+
+test('raw MIME output contains the composed signature in text and HTML parts', async () => {
+  const client = new SMTPClient({
+    host: 'smtp.example.com',
+    port: 465,
+    secure: true,
+    username: 'sender@example.com',
+    password: 'not-used',
+  });
+  const content = appendSignature('Hello', '<p>Hello</p>', {
+    text: 'Regards, Sender',
+    html: '<strong>Regards, Sender</strong>',
+  });
+
+  const raw = await client.buildRawMessage({
+    to: 'recipient@example.com',
+    subject: 'Signature test',
+    text: content.text,
+    html: content.html,
+  });
+  const message = raw.toString('utf8');
+
+  assert.match(message, /Regards, Sender/);
+  assert.match(message, /mcp-mail-signature/);
 });
 
 test('MailSearchService owns mailbox search, date filtering, and response limits', async () => {
