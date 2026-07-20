@@ -19,30 +19,23 @@
 
 ## 更新日志
 
-### [1.2.1] - 2026-03-18
+### [1.2.2] - 2026-07-20
 
-**修复**
-- 修复搜索条件（FROM/TO/SUBJECT/BODY/KEYWORD/SINCE）未使用嵌套数组格式，导致 TO 等搜索报错
-- 修复 `search()` criteria 被多包一层数组，导致复合搜索条件失效
-- 修复 `deleteMessage()` 在只读模式下操作失败
-- 修复 `getRecentMessages()` 误用 IMAP `RECENT` 标志，改为按 UID 取最新 N 封
-- 修复 `getRecentMessages()` / `getUnseenMessages()` 依赖上次操作遗留的邮箱状态
-- 修复 `cleanReplySubject()` 只去除单层 `Re:` 前缀，导致多层回复的未回复检测误判
-- 修复邮件日期存储为本地化字符串，跨平台解析不一致，改为 ISO 8601 格式
-- 修复 `ensureIMAPConnection()` 并发等待无超时，可能无限阻塞
-- 修复 `saveSentMessage()` 保存失败时仍返回 `sentFolderSaved: true`
-- 修复 `handleGetMessages()` / `handleDeleteMessage()` 依赖 `currentBox` 状态查找邮件
-- 修复 `reply_to_email` 在 `text` 为空时将 `"undefined"` 写入正文
+**Breaking Changes**
+- 单邮件工具现在必须同时传入 `mailbox` 和 UID，并返回 `sourceMailbox` 与 `uidValidity`
+- 本地附件读取和写入现在必须显式配置 `MAIL_ALLOWED_ROOTS` 白名单
 
-**新增**
-- 全部搜索工具新增 `inboxOnly` 参数，支持仅搜索收件箱
+**Security**
+- 默认启用 IMAP 证书校验，并增加真实路径校验和载荷大小限制
+- 升级 MCP SDK、Nodemailer、Mailparser、Rollup 及传递依赖，并移除存在漏洞的压缩插件
 
-**优化**
-- `ensureSMTPConnection()` 补充并发初始化保护，含 30 秒超时
-- 发件箱通过 RFC 6154 `\Sent` 属性自动探测并缓存，兼容各邮件服务商
-- `saveMessageToFolder()` 简化逻辑，找不到发件箱时跳过保存
-- 搜索改用 `slice(-limit)` 优先取最新邮件，日期过滤后不再返回空结果
-- 回复邮件引用内容增加 HTML 转义，防止 XSS 注入
+**Fixed**
+- 串行执行有状态 IMAP 工具调用，并修复发件箱状态漂移、SMTP 初始化清理、只读 `markSeen`、回复线程及未回复邮件排序问题
+- 已发送副本改用 Nodemailer 生成 MIME，保留附件和回复线程头
+
+**Added**
+- 将单体入口拆分为 MCP 编排、连接管理、搜索服务、工具定义、共享类型和工具函数模块
+- 新增 `npm run dev:inspector` 浏览器交互测试，并扩充自动化回归覆盖
 
 完整版本历史请查看 [CHANGELOG.zh.md](CHANGELOG.zh.md)。
 
@@ -270,17 +263,17 @@ claude mcp add mcp-mail-server \
 - **get_message_count**: 无需参数
 - **get_unseen_messages**: 无需参数
 - **get_recent_messages**: 无需参数
-- **get_message**: `uid` (数字), `markSeen` (布尔值, 可选)
-- **get_messages**: `uids` (数组), `markSeen` (布尔值, 可选)
-- **delete_message**: `uid` (数字)
+- **get_message**: `mailbox` (字符串), `uid` (数字), `uidValidity` (数字, 可选), `markSeen` (布尔值, 可选)
+- **get_messages**: `mailbox` (字符串), `uids` (数组), `uidValidity` (数字, 可选), `markSeen` (布尔值, 可选)
+- **delete_message**: `mailbox` (字符串), `uid` (数字), `uidValidity` (数字, 可选)
 
 ### 邮件发送
 - **send_email**: `to` (字符串), `subject` (字符串), `text` (字符串, 可选), `html` (字符串, 可选), `cc` (字符串, 可选), `bcc` (字符串, 可选), `attachments` (字符串数组, 可选, 绝对文件路径)
-- **reply_to_email**: `originalUid` (数字), `text` (字符串), `html` (字符串, 可选), `replyToAll` (布尔值, 可选), `includeOriginal` (布尔值, 可选)
+- **reply_to_email**: `mailbox` (字符串), `originalUid` (数字), `uidValidity` (数字, 可选), `text` (字符串), `html` (字符串, 可选), `replyToAll` (布尔值, 可选), `includeOriginal` (布尔值, 可选)
 
 ### 附件操作
-- **get_attachments**: `uid` (数字) — 返回元数据: 文件名、类型、大小、索引
-- **save_attachment**: `uid` (数字), `savePath` (字符串, 绝对路径), `attachmentIndex` (数字, 可选, 从0开始), `returnBase64` (布尔值, 可选, 默认: false)
+- **get_attachments**: `mailbox` (字符串), `uid` (数字), `uidValidity` (数字, 可选) — 返回元数据: 文件名、类型、大小、索引
+- **save_attachment**: `mailbox` (字符串), `uid` (数字), `uidValidity` (数字, 可选), `savePath` (字符串, 绝对路径), `attachmentIndex` (数字, 可选, 从0开始), `returnBase64` (布尔值, 可选, 默认: false)
 
 </details>
 
@@ -320,7 +313,7 @@ claude mcp add mcp-mail-server \
 
 ### 环境变量
 
-**⚠️ 所有变量都是必需的**
+**核心邮件变量是必需的；文件与安全策略变量按需配置。**
 
 | 变量 | 描述 | 示例 |
 |------|------|------|
@@ -332,6 +325,14 @@ claude mcp add mcp-mail-server \
 | `SMTP_SECURE` | 启用SSL | `true` |
 | `EMAIL_USER` | 邮箱用户名 | `your-email@gmail.com` |
 | `EMAIL_PASS` | 邮箱密码/应用密码 | `your-app-password` |
+| `IMAP_TLS_REJECT_UNAUTHORIZED` | 是否校验 IMAP TLS 证书，默认 `true` | `true` |
+| `MAIL_ALLOWED_ROOTS` | 允许附件读取/写入的已存在目录；未设置时禁用本地附件读写。多个目录在 macOS/Linux 用 `:`、Windows 用 `;` 分隔 | `/Users/me/Documents:/tmp/mail` |
+| `MAIL_MAX_ATTACHMENT_BYTES` | 单个附件及附件总量上限，默认 25 MiB | `26214400` |
+| `MAIL_MAX_MESSAGE_BYTES` | 单封邮件在内存中解析的上限，默认 25 MiB | `26214400` |
+| `MAIL_MAX_BASE64_BYTES` | 允许返回 Base64 的附件大小上限，默认 1 MiB | `1048576` |
+| `MAIL_MAX_BODY_CHARACTERS` | 单个正文或 HTML 返回字符上限，默认 200000 | `200000` |
+
+搜索结果会返回 `sourceMailbox`、`uid` 和 `uidValidity`。后续读取、回复、下载附件或删除邮件时，应原样传回这些字段，避免不同邮箱中的相同 UID 指向错误邮件。
 
 ### 常用邮件提供商
 
@@ -414,6 +415,25 @@ EMAIL_PASS=your-password
    ```
 
 </details>
+
+### 使用 MCP Inspector 交互测试
+
+运行：
+
+```bash
+npm run dev:inspector
+```
+
+命令会先构建项目，然后打开 MCP Inspector 页面。在连接面板中填写：
+
+- Transport Type：`STDIO`
+- Command：`node`
+- Arguments：`dist/index.js`
+- Environment Variables：填写上方配置表中的 IMAP、SMTP、账号及密码变量
+
+点击 **Connect** 后进入 **Tools** 页面，先调用 `connect_all` 和 `get_connection_status`，再测试搜索、读取或发送邮件工具。附件工具还需要配置 `MAIL_ALLOWED_ROOTS`。
+
+MCP Inspector 当前需要 Node.js 22；这只影响交互调试页面，不改变本 MCP 服务自身的 Node.js 18+ 运行要求。
 
 ## 贡献
 

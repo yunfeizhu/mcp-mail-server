@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.2] - 2026-07-20
+
+### Breaking Changes
+- Message-specific tools now require `mailbox` alongside UID; responses include `sourceMailbox` and `uidValidity` so messages cannot resolve to a same-numbered UID in another mailbox
+- Local attachment reads and writes are disabled unless `MAIL_ALLOWED_ROOTS` is configured
+
+### Security
+- Enabled IMAP certificate verification by default, with an explicit opt-out for self-signed deployments
+- Added canonical-path allowlists and size limits for local attachments, Base64 output, message parsing, and returned bodies
+- Upgraded the MCP SDK, Nodemailer, Mailparser, Rollup, and transitive dependencies; removed the vulnerable minification plugin
+
+### Fixed
+- Serialized tool execution to prevent concurrent requests from changing the selected IMAP mailbox mid-operation
+- Preserved attachments and reply threading headers in sent-folder copies by generating MIME through Nodemailer
+- Fixed stale SMTP initialization state, read-only `markSeen` behavior, sent-folder mailbox state drift, repeated `Re:` prefixes, and oldest-first unreplied analysis
+
+### Added
+- Split the former monolithic entry point into MCP orchestration, tool definitions, connection management, search services, shared types, and mail utilities
+- Added `npm run dev:inspector` for browser-based MCP connection and tool testing
+- Added unit coverage for serialization, message references, path policy, MIME generation, search behavior, and an end-to-end MCP stdio handshake
+
 ## [1.2.1] - 2026-03-18
 
 ### Fixed

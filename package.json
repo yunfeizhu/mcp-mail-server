@@ -1,6 +1,6 @@
 {
   "name": "mcp-mail-server",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "MCP server for IMAP/SMTP email access with environment-based configuration",
   "main": "dist/index.js",
   "type": "module",
@@ -12,6 +12,8 @@
     "build:dev": "rollup -c --watch",
     "build:tsc": "tsc",
     "dev": "tsc --watch",
+    "dev:inspector": "npm run build && npx -y @modelcontextprotocol/inspector",
+    "test": "npm run build:tsc && node --test test/*.test.js",
     "start": "node dist/index.js",
     "prepublishOnly": "npm run build",
     "clean": "rimraf dist"
@@ -46,22 +48,26 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^0.5.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "imap": "^0.8.19",
-    "mailparser": "^3.7.4",
-    "nodemailer": "^6.9.0"
+    "mailparser": "^3.9.14",
+    "nodemailer": "^9.0.3"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "^25.0.0",
     "@rollup/plugin-node-resolve": "^15.0.0",
-    "@rollup/plugin-terser": "^0.4.0",
     "@rollup/plugin-typescript": "^11.0.0",
     "@types/imap": "^0.8.42",
     "@types/mailparser": "^3.4.6",
     "@types/node": "^20.0.0",
-    "@types/nodemailer": "^6.4.0",
+    "@types/nodemailer": "^8.0.1",
     "rollup": "^4.0.0",
     "tslib": "^2.6.0",
     "typescript": "^5.0.0"
+  },
+  "overrides": {
+    "utf7": {
+      "semver": "^7.8.5"
+    }
   }
 }

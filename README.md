@@ -19,30 +19,23 @@ A Model Context Protocol server for IMAP/SMTP email operations with Claude, Curs
 
 ## Changelog
 
-### [1.2.1] - 2026-03-18
+### [1.2.2] - 2026-07-20
+
+**Breaking Changes**
+- Message-specific tools now require `mailbox` alongside UID and return `sourceMailbox` plus `uidValidity`
+- Local attachment reads and writes now require an explicit `MAIL_ALLOWED_ROOTS` allowlist
+
+**Security**
+- Enabled IMAP certificate verification by default and added canonical-path and payload-size limits
+- Upgraded the MCP SDK, Nodemailer, Mailparser, Rollup, and transitive dependencies; removed the vulnerable minification plugin
 
 **Fixed**
-- Fixed search criteria (FROM/TO/SUBJECT/BODY/KEYWORD/SINCE) not using nested array format, causing errors on TO and other searches
-- Fixed `search()` wrapping criteria in an extra array, breaking compound search conditions
-- Fixed `deleteMessage()` failing silently when the mailbox was opened in read-only mode
-- Fixed `getRecentMessages()` misusing the IMAP `RECENT` flag; now fetches latest N messages by UID
-- Fixed `getRecentMessages()` / `getUnseenMessages()` relying on leftover mailbox state from previous operations
-- Fixed `cleanReplySubject()` only stripping one `Re:` prefix layer, causing false negatives in unreplied detection
-- Fixed email date stored as locale string causing inconsistent `new Date()` parsing across platforms; changed to ISO 8601
-- Fixed `ensureIMAPConnection()` having no timeout while waiting for concurrent initialization
-- Fixed `saveSentMessage()` always returning `sentFolderSaved: true` even when save failed
-- Fixed `handleGetMessages()` / `handleDeleteMessage()` relying on `currentBox` state to locate messages
-- Fixed `reply_to_email` writing literal `"undefined"` into the body when `text` is empty
+- Serialized stateful IMAP tool calls and fixed sent-folder state drift, SMTP initialization cleanup, read-only `markSeen`, reply threading, and unreplied-message ordering
+- Preserved attachments and threading headers in sent-folder MIME copies
 
 **Added**
-- All search tools now support an `inboxOnly` parameter to restrict search to INBOX only
-
-**Improved**
-- `ensureSMTPConnection()` now has concurrency guard with 30-second timeout, consistent with IMAP
-- Sent mailbox auto-detected via RFC 6154 `\Sent` special-use attribute with result caching, compatible with all mail providers
-- `saveMessageToFolder()` simplified; skips saving if no sent folder is found
-- Search now uses `slice(-limit)` to fetch the newest messages first, preventing empty results after date filtering
-- HTML-escape applied to quoted content in reply emails to prevent XSS injection
+- Split the monolithic entry point into MCP orchestration, connection management, search services, tool definitions, shared types, and utilities
+- Added browser-based tool testing through `npm run dev:inspector` and expanded automated regression coverage
 
 For the full version history, see [CHANGELOG.md](CHANGELOG.md).
 
@@ -270,17 +263,17 @@ Refer to your specific client's documentation for the appropriate configuration 
 - **get_message_count**: No parameters required
 - **get_unseen_messages**: No parameters required
 - **get_recent_messages**: No parameters required
-- **get_message**: `uid` (number), `markSeen` (boolean, optional)
-- **get_messages**: `uids` (array), `markSeen` (boolean, optional)
-- **delete_message**: `uid` (number)
+- **get_message**: `mailbox` (string), `uid` (number), `uidValidity` (number, optional), `markSeen` (boolean, optional)
+- **get_messages**: `mailbox` (string), `uids` (array), `uidValidity` (number, optional), `markSeen` (boolean, optional)
+- **delete_message**: `mailbox` (string), `uid` (number), `uidValidity` (number, optional)
 
 ### Email Sending
 - **send_email**: `to` (string), `subject` (string), `text` (string, optional), `html` (string, optional), `cc` (string, optional), `bcc` (string, optional), `attachments` (string[], optional, absolute file paths)
-- **reply_to_email**: `originalUid` (number), `text` (string), `html` (string, optional), `replyToAll` (boolean, optional), `includeOriginal` (boolean, optional)
+- **reply_to_email**: `mailbox` (string), `originalUid` (number), `uidValidity` (number, optional), `text` (string), `html` (string, optional), `replyToAll` (boolean, optional), `includeOriginal` (boolean, optional)
 
 ### Attachment Operations
-- **get_attachments**: `uid` (number) — Returns metadata: filename, contentType, size, index
-- **save_attachment**: `uid` (number), `savePath` (string, absolute path), `attachmentIndex` (number, optional, 0-based), `returnBase64` (boolean, optional, default: false)
+- **get_attachments**: `mailbox` (string), `uid` (number), `uidValidity` (number, optional) — Returns metadata: filename, contentType, size, index
+- **save_attachment**: `mailbox` (string), `uid` (number), `uidValidity` (number, optional), `savePath` (string, absolute path), `attachmentIndex` (number, optional, 0-based), `returnBase64` (boolean, optional, default: false)
 
 </details>
 
@@ -320,7 +313,7 @@ Use natural language commands with your AI assistant:
 
 ### Environment Variables
 
-**⚠️ All variables are required**
+**Core mail variables are required. File and security policy variables are optional.**
 
 | Variable | Description | Example |
 |----------|-------------|---------|
@@ -332,6 +325,14 @@ Use natural language commands with your AI assistant:
 | `SMTP_SECURE` | Enable SSL | `true` |
 | `EMAIL_USER` | Email username | `your-email@gmail.com` |
 | `EMAIL_PASS` | Email password/app password | `your-app-password` |
+| `IMAP_TLS_REJECT_UNAUTHORIZED` | Verify the IMAP TLS certificate; defaults to `true` | `true` |
+| `MAIL_ALLOWED_ROOTS` | Existing attachment read/write roots. Local attachment access is disabled when unset. Separate roots with `:` on macOS/Linux or `;` on Windows | `/Users/me/Documents:/tmp/mail` |
+| `MAIL_MAX_ATTACHMENT_BYTES` | Per-attachment and total attachment limit; defaults to 25 MiB | `26214400` |
+| `MAIL_MAX_MESSAGE_BYTES` | Maximum bytes parsed in memory for one message; defaults to 25 MiB | `26214400` |
+| `MAIL_MAX_BASE64_BYTES` | Maximum attachment size returned as Base64; defaults to 1 MiB | `1048576` |
+| `MAIL_MAX_BODY_CHARACTERS` | Maximum returned characters for each text or HTML body; defaults to 200000 | `200000` |
+
+Search results include `sourceMailbox`, `uid`, and `uidValidity`. Pass these values back unchanged when reading, replying, downloading attachments, or deleting so identical UIDs in different mailboxes cannot resolve to the wrong message.
 
 ### Common Email Providers
 
@@ -415,6 +416,25 @@ EMAIL_PASS=your-password
 
 </details>
 
+### Interactive testing with MCP Inspector
+
+Run:
+
+```bash
+npm run dev:inspector
+```
+
+The command builds the project and opens the MCP Inspector UI. In the connection pane, configure:
+
+- Transport Type: `STDIO`
+- Command: `node`
+- Arguments: `dist/index.js`
+- Environment Variables: the IMAP, SMTP, username, and password variables listed above
+
+Click **Connect**, open **Tools**, and call `connect_all` and `get_connection_status` before testing search, read, or send tools. Attachment tools also require `MAIL_ALLOWED_ROOTS`.
+
+The current MCP Inspector requires Node.js 22. This affects only the interactive development UI; the MCP server itself continues to support Node.js 18+.
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
@@ -430,4 +450,3 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - Node.js: ≥18.0.0
 - Repository: [GitHub](https://github.com/yunfeizhu/mcp-mail-server)
 - Issues: [Report bugs](https://github.com/yunfeizhu/mcp-mail-server/issues)
-

@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.2] - 2026-07-20
+
+### Breaking Changes
+- 单邮件工具现在必须同时传入 `mailbox` 和 UID；响应新增 `sourceMailbox` 与 `uidValidity`，避免命中其他邮箱中的同号 UID
+- 未配置 `MAIL_ALLOWED_ROOTS` 时，默认禁用本地附件读取和写入
+
+### Security
+- 默认启用 IMAP 证书校验，自签名部署必须显式关闭或调整配置
+- 为本地附件、Base64 返回、邮件解析和正文输出增加真实路径白名单及大小限制
+- 升级 MCP SDK、Nodemailer、Mailparser、Rollup 及传递依赖，并移除存在漏洞且非必要的压缩插件
+
+### Fixed
+- 串行执行工具调用，避免并发请求在操作过程中切换 IMAP 当前邮箱
+- 使用 Nodemailer 生成已发送副本的 MIME，保留附件与回复线程头
+- 修复 SMTP 初始化残留、只读模式标记已读、发件箱状态漂移、重复 `Re:` 前缀和未回复分析优先处理旧邮件的问题
+
+### Added
+- 将原先单体入口拆分为 MCP 编排、工具定义、连接管理、搜索服务、共享类型及邮件工具函数模块
+- 新增 `npm run dev:inspector`，支持通过浏览器配置连接并交互测试 MCP 工具
+- 增加串行队列、邮件引用、路径策略、MIME 生成、搜索行为及 MCP stdio 握手测试
+
 ## [1.2.1] - 2026-03-18
 
 ### Fixed

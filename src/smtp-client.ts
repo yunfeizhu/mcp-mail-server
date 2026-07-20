@@ -1,4 +1,4 @@
-import nodemailer, { Transporter } from 'nodemailer';
+import nodemailer, { SendMailOptions, Transporter } from 'nodemailer';
 
 export interface SMTPConfig {
   host: string;
@@ -16,6 +16,9 @@ export interface EmailOptions {
   subject: string;
   text?: string;
   html?: string;
+  messageId?: string;
+  inReplyTo?: string;
+  references?: string | string[];
   attachments?: Array<{
     filename: string;
     content: string | Buffer;
@@ -55,16 +58,17 @@ export class SMTPClient {
         await this.transporter.verify();
       }
     } catch (error) {
+      try {
+        this.transporter?.close();
+      } finally {
+        this.transporter = null;
+      }
       throw new Error(`SMTP connection failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  async sendMail(options: EmailOptions): Promise<EmailResult> {
-    if (!this.transporter) {
-      throw new Error('SMTP client not connected');
-    }
-
-    const mailOptions = {
+  private createMailOptions(options: EmailOptions): SendMailOptions {
+    return {
       from: options.from || this.config.username,
       to: Array.isArray(options.to) ? options.to.join(', ') : options.to,
       cc: options.cc ? (Array.isArray(options.cc) ? options.cc.join(', ') : options.cc) : undefined,
@@ -72,11 +76,20 @@ export class SMTPClient {
       subject: options.subject,
       text: options.text,
       html: options.html,
+      messageId: options.messageId,
+      inReplyTo: options.inReplyTo,
+      references: options.references,
       attachments: options.attachments,
     };
+  }
+
+  async sendMail(options: EmailOptions): Promise<EmailResult> {
+    if (!this.transporter) {
+      throw new Error('SMTP client not connected');
+    }
 
     try {
-      const result = await this.transporter.sendMail(mailOptions);
+      const result = await this.transporter.sendMail(this.createMailOptions(options));
       
       return {
         messageId: result.messageId,
@@ -86,6 +99,27 @@ export class SMTPClient {
       };
     } catch (error) {
       throw new Error(`Failed to send email: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  async buildRawMessage(options: EmailOptions, messageId?: string): Promise<Buffer> {
+    const streamTransport = nodemailer.createTransport({
+      streamTransport: true,
+      buffer: true,
+      newline: 'windows',
+    } as any);
+
+    try {
+      const result = await streamTransport.sendMail({
+        ...this.createMailOptions(options),
+        messageId: messageId || options.messageId,
+      }) as any;
+      if (!Buffer.isBuffer(result.message)) {
+        throw new Error('Nodemailer did not return a buffered raw message');
+      }
+      return result.message;
+    } finally {
+      streamTransport.close();
     }
   }
 

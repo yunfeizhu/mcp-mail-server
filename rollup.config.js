@@ -1,7 +1,6 @@
 import typescript from '@rollup/plugin-typescript';
 import resolve from '@rollup/plugin-node-resolve';
 import commonjs from '@rollup/plugin-commonjs';
-import terser from '@rollup/plugin-terser';
 
 export default {
   input: 'src/index.ts',
@@ -43,22 +42,6 @@ export default {
       tsconfig: './tsconfig.json',
       sourceMap: false,
       declaration: false
-    }),
-    // 压缩混淆
-    terser({
-      compress: {
-        drop_console: false, // 保留 console.error 用于调试
-        drop_debugger: true,
-        pure_funcs: ['console.log'], // 移除 console.log
-        passes: 2
-      },
-      mangle: {
-        reserved: ['IMAPClient', 'SMTPClient', 'MailMCPServer'], // 保留主要类名
-        properties: false
-      },
-      format: {
-        comments: false
-      }
     }),
   ]
 };

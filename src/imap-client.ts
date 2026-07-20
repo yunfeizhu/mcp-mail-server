@@ -8,10 +8,12 @@ export interface IMAPConfig {
   username: string;
   password: string;
   tls?: boolean;
+  tlsRejectUnauthorized?: boolean;
   connTimeout?: number;
   authTimeout?: number;
   socketTimeout?: number;
   keepalive?: boolean;
+  maxMessageBytes?: number;
 }
 
 export interface AttachmentMeta {
@@ -29,6 +31,8 @@ export interface AttachmentData extends AttachmentMeta {
 
 export interface EmailMessage {
   uid: number;
+  sourceMailbox: string;
+  uidValidity: number;
   id?: number;
   flags: string[];
   date: string; // 改为字符串格式，使用中国东八区时间
@@ -42,6 +46,9 @@ export interface EmailMessage {
   text?: string;
   html?: string;
   attachments?: AttachmentMeta[];
+  messageId?: string;
+  inReplyTo?: string;
+  references?: string[];
 }
 
 export interface MailboxInfo {
@@ -62,6 +69,7 @@ export class IMAPClient extends EventEmitter {
   private connected = false;
   private authenticated = false;
   private currentBox: string | null = null;
+  private currentUidValidity: number | null = null;
 
   constructor(config: IMAPConfig) {
     super();
@@ -79,7 +87,7 @@ export class IMAPClient extends EventEmitter {
         port: this.config.port,
         tls: this.config.tls || false,
         tlsOptions: {
-          rejectUnauthorized: false,
+          rejectUnauthorized: this.config.tlsRejectUnauthorized !== false,
           servername: this.config.host
         },
         connTimeout: this.config.connTimeout ?? 60000,
@@ -116,6 +124,7 @@ export class IMAPClient extends EventEmitter {
         this.connected = false;
         this.authenticated = false;
         this.currentBox = null;
+        this.currentUidValidity = null;
       });
 
       this.imap.connect();
@@ -137,6 +146,7 @@ export class IMAPClient extends EventEmitter {
 
         console.error(`[IMAP] Opened box ${boxName}`);
         this.currentBox = boxName;
+        this.currentUidValidity = box.uidvalidity;
         
         const mailboxInfo: MailboxInfo = {
           name: boxName,
@@ -212,6 +222,8 @@ export class IMAPClient extends EventEmitter {
       markSeen: options.markSeen || false,
       ...options
     };
+    const sourceMailbox = this.currentBox!;
+    const uidValidity = this.currentUidValidity!;
 
     return new Promise((resolve, reject) => {
       const messages: EmailMessage[] = [];
@@ -220,6 +232,7 @@ export class IMAPClient extends EventEmitter {
         headers: Record<string, string>;
         body: string;
         rawBuffer: Buffer;
+        tooLarge: boolean;
       }> = new Map();
       
       if (uids.length === 0) {
@@ -235,8 +248,13 @@ export class IMAPClient extends EventEmitter {
         let headers: Record<string, string> = {};
         let body = '';
         const rawChunks: Buffer[] = [];
+        let rawBytes = 0;
+        let tooLarge = false;
+        const maxMessageBytes = this.config.maxMessageBytes ?? 25 * 1024 * 1024;
         const message: Partial<EmailMessage> = {
           uid: 0,
+          sourceMailbox,
+          uidValidity,
           id: seqno,
           flags: [],
           date: '',
@@ -246,8 +264,16 @@ export class IMAPClient extends EventEmitter {
         msg.on('body', (stream, info) => {
           const chunks: Buffer[] = [];
           stream.on('data', (chunk: Buffer) => {
-            chunks.push(chunk);
-            rawChunks.push(chunk); // 保存所有原始数据
+            const canBufferChunk = rawBytes + chunk.length <= maxMessageBytes;
+            if (info.which === 'HEADER' || canBufferChunk) {
+              chunks.push(chunk);
+            }
+            if (canBufferChunk) {
+              rawChunks.push(chunk);
+              rawBytes += chunk.length;
+            } else {
+              tooLarge = true;
+            }
           });
           
           stream.once('end', () => {
@@ -279,7 +305,8 @@ export class IMAPClient extends EventEmitter {
             message,
             headers,
             body,
-            rawBuffer: Buffer.concat(rawChunks)
+            rawBuffer: Buffer.concat(rawChunks),
+            tooLarge,
           });
         });
       });
@@ -295,6 +322,18 @@ export class IMAPClient extends EventEmitter {
         // 解析所有待处理的消息
         for (const [seqno, data] of pendingMessages) {
           try {
+            if (data.tooLarge) {
+              messages.push({
+                ...data.message,
+                subject: data.headers['subject'] || 'Message too large',
+                from: data.headers['from'] || '',
+                to: data.headers['to'] || '',
+                cc: data.headers['cc'] || undefined,
+                bcc: data.headers['bcc'] || undefined,
+                text: `[Message body omitted because it exceeds the configured limit of ${this.config.maxMessageBytes ?? 25 * 1024 * 1024} bytes]`,
+              } as EmailMessage);
+              continue;
+            }
             // 使用 mailparser 解析完整的邮件原始Buffer，让mailparser自动处理编码
             const parsedMail = await simpleParser(data.rawBuffer);
             
@@ -354,6 +393,13 @@ export class IMAPClient extends EventEmitter {
               text: parsedMail.text,
               html: parsedMail.html,
               attachments: attachmentsMeta.length > 0 ? attachmentsMeta : undefined,
+              messageId: parsedMail.messageId || undefined,
+              inReplyTo: parsedMail.inReplyTo || undefined,
+              references: Array.isArray(parsedMail.references)
+                ? parsedMail.references
+                : parsedMail.references
+                  ? [parsedMail.references]
+                  : undefined,
             } as EmailMessage);
           } catch (error) {
             console.error(`[IMAP] Failed to parse message ${seqno}:`, error);
@@ -540,6 +586,7 @@ export class IMAPClient extends EventEmitter {
       this.imap = null;
       this.authenticated = false;
       this.currentBox = null;
+      this.currentUidValidity = null;
       return;
     }
 
@@ -549,6 +596,7 @@ export class IMAPClient extends EventEmitter {
         this.connected = false;
         this.authenticated = false;
         this.currentBox = null;
+        this.currentUidValidity = null;
         this.imap = null;
         resolve();
       }, 5000); // 5秒超时
@@ -559,6 +607,7 @@ export class IMAPClient extends EventEmitter {
         this.connected = false;
         this.authenticated = false;
         this.currentBox = null;
+        this.currentUidValidity = null;
         this.imap = null;
         resolve();
       });
@@ -569,6 +618,7 @@ export class IMAPClient extends EventEmitter {
         this.connected = false;
         this.authenticated = false;
         this.currentBox = null;
+        this.currentUidValidity = null;
         this.imap = null;
         resolve(); // 即使有错误也要resolve，因为目标是断开连接
       });
@@ -581,6 +631,7 @@ export class IMAPClient extends EventEmitter {
         this.connected = false;
         this.authenticated = false;
         this.currentBox = null;
+        this.currentUidValidity = null;
         this.imap = null;
         resolve();
       }
@@ -595,36 +646,30 @@ export class IMAPClient extends EventEmitter {
     return this.currentBox;
   }
 
+  getCurrentUidValidity(): number | null {
+    return this.currentUidValidity;
+  }
+
   getCurrentUsername(): string | null {
     return this.config?.username || null;
   }
 
   // 保存邮件到指定文件夹（用于已发送邮件）
-  async saveMessageToFolder(messageContent: string, folderName: string): Promise<void> {
+  async saveMessageToFolder(messageContent: string | Buffer, folderName: string): Promise<void> {
     if (!this.connected) {
       throw new Error('IMAP client is not connected');
     }
 
     return new Promise((resolve, reject) => {
-      this.imap!.openBox(folderName, false, (err) => {
+      this.imap!.append(messageContent, { mailbox: folderName }, (err) => {
         if (err) {
-          reject(new Error(`Failed to open folder ${folderName}: ${err.message}`));
+          console.error(`[IMAP] Failed to save message to ${folderName}:`, err.message);
+          reject(new Error(`Failed to save message to ${folderName}: ${err.message}`));
           return;
         }
-        this.saveToOpenedFolder(messageContent, folderName, resolve, reject);
-      });
-    });
-  }
-
-  private saveToOpenedFolder(messageContent: string, folderName: string, resolve: () => void, reject: (error: Error) => void): void {
-    this.imap!.append(messageContent, { mailbox: folderName }, (err) => {
-      if (err) {
-        console.error(`[IMAP] Failed to save message to ${folderName}:`, err.message);
-        reject(new Error(`Failed to save message to ${folderName}: ${err.message}`));
-      } else {
-        console.log(`[IMAP] Message successfully saved to ${folderName}`);
+        console.error(`[IMAP] Message successfully saved to ${folderName}`);
         resolve();
-      }
+      });
     });
   }
 }
