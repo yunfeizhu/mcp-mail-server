@@ -3,3 +3,7 @@ dist
 node_modules
 package-lock.json
 *.tgz
+.agent
+.agents
+.claude
+.codex

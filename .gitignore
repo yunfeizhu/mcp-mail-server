@@ -30,3 +30,9 @@ coverage
 *.sw?
 
 *.tsbuildinfo
+
+# Local AI assistant configuration
+.agent/
+.agents/
+.claude/
+.codex/

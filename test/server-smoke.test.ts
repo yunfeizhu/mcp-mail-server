@@ -1,9 +1,82 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import test from 'node:test';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+
+const CHILD_START_TIMEOUT_MS = 10_000;
+const CHILD_EXIT_TIMEOUT_MS = 5_000;
+const MAX_DIAGNOSTIC_LENGTH = 4_000;
+
+function waitForStderrMessage(
+  child: ChildProcess,
+  expectedMessage: string,
+  timeoutMs: number,
+): Promise<void> {
+  if (!child.stderr) {
+    return Promise.reject(new Error('stdio child stderr is unavailable'));
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    let stderr = '';
+    let settled = false;
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.stderr?.off('data', onData);
+      child.off('error', onError);
+      child.off('close', onClose);
+    };
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
+    const diagnostic = () => stderr.trim() || 'no stderr output';
+    const onData = (chunk: Buffer | string) => {
+      stderr = `${stderr}${String(chunk)}`.slice(-MAX_DIAGNOSTIC_LENGTH);
+      if (stderr.includes(expectedMessage)) finish();
+    };
+    const onError = (error: Error) => finish(error);
+    const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
+      finish(
+        new Error(
+          `stdio child exited before startup (code: ${String(code)}, signal: ${String(signal)}): ${diagnostic()}`,
+        ),
+      );
+    };
+    const timeout = setTimeout(() => {
+      finish(new Error(`stdio child did not start within ${timeoutMs}ms: ${diagnostic()}`));
+    }, timeoutMs);
+
+    child.stderr.on('data', onData);
+    child.once('error', onError);
+    child.once('close', onClose);
+  });
+}
+
+function waitForChildClose(
+  child: ChildProcess,
+  timeoutMs: number,
+): Promise<readonly [number | null, NodeJS.Signals | null]> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve([child.exitCode, child.signalCode]);
+  }
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error(`stdio child remained alive ${timeoutMs}ms after EOF`)),
+      timeoutMs,
+    );
+    child.once('close', (code, signal) => {
+      clearTimeout(timeout);
+      resolve([code, signal]);
+    });
+  });
+}
 
 test('stdio server initializes and exposes mailbox-scoped message tools', async () => {
   const transport = new StdioClientTransport({
@@ -147,32 +220,14 @@ test('stdio EOF performs graceful connection cleanup without leaving the process
     },
   );
   t.after(() => {
-    if (child.exitCode === null) child.kill('SIGKILL');
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
   });
 
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('stdio child did not start')), 1000);
-    child.stderr.on('data', chunk => {
-      if (String(chunk).includes('MCP Mail server running on stdio')) {
-        clearTimeout(timeout);
-        resolve();
-      }
-    });
-  });
+  await waitForStderrMessage(child, 'MCP Mail server running on stdio', CHILD_START_TIMEOUT_MS);
 
+  const closePromise = waitForChildClose(child, CHILD_EXIT_TIMEOUT_MS);
   child.stdin.end();
-  const [exitCode, signal] = await new Promise<readonly [number | null, NodeJS.Signals | null]>(
-    (resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error('stdio child remained alive after EOF')),
-        1000,
-      );
-      child.once('close', (code, closeSignal) => {
-        clearTimeout(timeout);
-        resolve([code, closeSignal]);
-      });
-    },
-  );
+  const [exitCode, signal] = await closePromise;
   assert.equal(exitCode, 0);
   assert.equal(signal, null);
 });
