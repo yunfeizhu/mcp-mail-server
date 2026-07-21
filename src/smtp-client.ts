@@ -1,4 +1,4 @@
-import nodemailer, { SendMailOptions, Transporter } from 'nodemailer';
+import nodemailer, { type SendMailOptions, type Transporter } from 'nodemailer';
 
 export interface SMTPConfig {
   host: string;
@@ -6,6 +6,9 @@ export interface SMTPConfig {
   secure?: boolean;
   username: string;
   password: string;
+  fromAddress?: string;
+  requireTLS?: boolean;
+  tlsRejectUnauthorized?: boolean;
 }
 
 export interface EmailOptions {
@@ -46,33 +49,50 @@ export class SMTPClient {
       host: this.config.host,
       port: this.config.port,
       secure: this.config.secure || false,
+      requireTLS: this.config.requireTLS === true,
+      tls: {
+        rejectUnauthorized: this.config.tlsRejectUnauthorized !== false,
+        servername: this.config.host,
+      },
       auth: {
         user: this.config.username,
         pass: this.config.password,
       },
     });
 
-    // 验证连接
+    await this.verifyConnection();
+  }
+
+  async verifyConnection(): Promise<void> {
+    if (!this.transporter) {
+      throw new Error('SMTP client not connected');
+    }
+
     try {
-      if (this.transporter) {
-        await this.transporter.verify();
-      }
+      await this.transporter.verify();
     } catch (error) {
       try {
         this.transporter?.close();
       } finally {
         this.transporter = null;
       }
-      throw new Error(`SMTP connection failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `SMTP connection failed: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
   }
 
   private createMailOptions(options: EmailOptions): SendMailOptions {
     return {
-      from: options.from || this.config.username,
+      from: options.from || this.config.fromAddress || this.config.username,
       to: Array.isArray(options.to) ? options.to.join(', ') : options.to,
       cc: options.cc ? (Array.isArray(options.cc) ? options.cc.join(', ') : options.cc) : undefined,
-      bcc: options.bcc ? (Array.isArray(options.bcc) ? options.bcc.join(', ') : options.bcc) : undefined,
+      bcc: options.bcc
+        ? Array.isArray(options.bcc)
+          ? options.bcc.join(', ')
+          : options.bcc
+        : undefined,
       subject: options.subject,
       text: options.text,
       html: options.html,
@@ -90,7 +110,7 @@ export class SMTPClient {
 
     try {
       const result = await this.transporter.sendMail(this.createMailOptions(options));
-      
+
       return {
         messageId: result.messageId,
         response: result.response,
@@ -98,7 +118,10 @@ export class SMTPClient {
         rejected: result.rejected || [],
       };
     } catch (error) {
-      throw new Error(`Failed to send email: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Failed to send email: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
   }
 
@@ -110,10 +133,10 @@ export class SMTPClient {
     } as any);
 
     try {
-      const result = await streamTransport.sendMail({
+      const result = (await streamTransport.sendMail({
         ...this.createMailOptions(options),
         messageId: messageId || options.messageId,
-      }) as any;
+      })) as any;
       if (!Buffer.isBuffer(result.message)) {
         throw new Error('Nodemailer did not return a buffered raw message');
       }
@@ -137,7 +160,10 @@ export class SMTPClient {
         this.transporter.close();
         console.error('[SMTP] Disconnected successfully');
       } catch (error) {
-        console.error('[SMTP] Error during disconnect:', error instanceof Error ? error.message : String(error));
+        console.error(
+          '[SMTP] Error during disconnect:',
+          error instanceof Error ? error.message : String(error),
+        );
         // 即使关闭时出错，我们仍然要清理引用
       } finally {
         this.transporter = null;

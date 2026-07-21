@@ -1,458 +1,694 @@
-import { EmailMessage, IMAPClient } from './imap-client.js';
-import { ExtendedEmailMessage, SearchArgs, SearchResult } from './mail-types.js';
-import { cleanReplySubject } from './mail-utils.js';
+import {
+  type EmailMessage,
+  type FetchByteBudget,
+  FetchByteLimitError,
+  type IMAPClient,
+} from './imap-client';
+import {
+  type ExtendedEmailMessage,
+  type FindUnrepliedMessagesArgs,
+  type MailboxSearchResult,
+  type SearchMessagesArgs,
+  type SearchResult,
+} from './mail-types';
+import { cleanReplySubject } from './mail-utils';
 
 interface MailSearchServiceDependencies {
   ensureIMAPConnection: () => Promise<void>;
   getIMAPClient: () => IMAPClient;
   findSentMailbox: () => Promise<string | null>;
   maxBodyCharacters: number;
+  maxResponseCharacters: number;
+  maxSearchCandidates: number;
+  maxSearchHeaderBytes: number;
 }
 
 type SearchResponse = {
   content: Array<{ type: 'text'; text: string }>;
 };
 
+interface CollectedSearch {
+  criteria: any[];
+  mailboxesSearched: MailboxSearchResult[];
+  messages: ExtendedEmailMessage[];
+  totalMatches: number;
+  warning?: string;
+}
+
+interface CollectOptions {
+  candidateBudget?: SearchCandidateBudget;
+}
+
+interface SearchCandidateBudget {
+  used: number;
+  limit: number;
+  headerBytes: FetchByteBudget;
+}
+
+class SearchResourceLimitError extends Error {}
+
+const SEARCH_FETCH_BATCH_SIZE = 50;
+const SEARCH_HEADER_FIELDS =
+  'HEADER.FIELDS (FROM REPLY-TO TO CC BCC SUBJECT MESSAGE-ID IN-REPLY-TO REFERENCES)';
+const INVALID_IMAP_KEYWORD_CHARS = /[(){}\\\]"%*]/;
+
+function hasUnsafeImapKeywordCharacter(value: string): boolean {
+  return (
+    INVALID_IMAP_KEYWORD_CHARS.test(value) ||
+    [...value].some(character => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint <= 0x20 || codePoint === 0x7f;
+    })
+  );
+}
+
 export class MailSearchService {
   constructor(private readonly dependencies: MailSearchServiceDependencies) {}
 
-  async searchBySender(args: SearchArgs): Promise<SearchResponse> {
-    const sender = this.requireString(args.sender, 'sender');
-    return this.runSearch(
-      args,
-      [['FROM', sender]],
-      'By Sender',
-      sender,
-      'Search by sender failed',
-      result => { result.sender = sender; }
-    );
-  }
-
-  async searchBySubject(args: SearchArgs): Promise<SearchResponse> {
-    const subject = this.requireString(args.subject, 'subject');
-    return this.runSearch(
-      args,
-      [['SUBJECT', subject]],
-      'By Subject',
-      subject,
-      'Search by subject failed',
-      result => { result.subjectKeywords = subject; }
-    );
-  }
-
-  async searchByRecipient(args: SearchArgs): Promise<SearchResponse> {
-    const recipient = this.requireString(args.recipient, 'recipient');
-    return this.runSearch(
-      args,
-      [['TO', recipient]],
-      'By Recipient',
-      recipient,
-      'Search by recipient failed',
-      result => { result.recipient = recipient; }
-    );
-  }
-
-  async searchSinceDate(args: SearchArgs): Promise<SearchResponse> {
-    const date = this.requireString(args.date, 'date');
-
+  async findLatestSentMessage(args: {
+    subject: string;
+    recipient?: string;
+    since?: string;
+  }): Promise<ExtendedEmailMessage | null> {
     try {
+      const subject = this.requireString(args.subject, 'subject');
+      const recipient =
+        args.recipient === undefined ? undefined : this.requireString(args.recipient, 'recipient');
       await this.dependencies.ensureIMAPConnection();
-      const parsedDate = new Date(date);
-      if (Number.isNaN(parsedDate.getTime())) {
-        throw new Error(`Invalid date format: ${date}. Use formats like "2026-03-17", "17-Mar-2026", or "March 17, 2026"`);
+      const sentMailbox = await this.dependencies.findSentMailbox();
+      if (!sentMailbox) {
+        throw new Error('Could not find a sent mailbox');
       }
 
-      const result = await this.searchInMultipleMailboxes(
-        [['SINCE', parsedDate]],
-        'Since Date',
-        date,
-        '',
-        '',
-        args.inboxOnly ?? false
+      const query = this.normalizeSearchArgs(
+        {
+          mailboxes: [sentMailbox],
+          subject: cleanReplySubject(subject),
+          to: recipient,
+          since: args.since,
+          limit: 200,
+          includeBody: false,
+        },
+        200,
+        false,
       );
-      result.sinceDate = date;
-      result.note = 'Date format should be like "April 20, 2010" or "20-Apr-2010". Searched across multiple mailboxes.';
-      return this.response(result);
+      const collected = await this.collectMessages(query);
+      if (collected.warning) {
+        throw new Error(`The sent mailbox could not be searched reliably: ${collected.warning}`);
+      }
+
+      const normalizedSubject = this.normalizeThreadSubject(subject);
+      return (
+        collected.messages
+          .filter(
+            message => this.normalizeThreadSubject(message.subject || '') === normalizedSubject,
+          )
+          .sort((left, right) => this.messageTimestamp(right) - this.messageTimestamp(left))[0] ||
+        null
+      );
     } catch (error) {
-      throw new Error(this.formatError(error, 'Search since date failed'));
+      throw new Error(this.formatError(error, 'Find latest sent message failed'), { cause: error });
     }
   }
 
-  async searchUnreadFromSender(args: SearchArgs): Promise<SearchResponse> {
-    const sender = this.requireString(args.sender, 'sender');
-    return this.runSearch(
-      args,
-      ['UNSEEN', ['FROM', sender]],
-      'Unread messages from specific sender',
-      sender,
-      'Search unread from sender failed',
-      result => {
-        result.sender = sender;
-        result.note = 'By default, all criteria are ANDed together - finds messages that are BOTH unread AND from the specified sender. Searched across multiple mailboxes.';
-      }
-    );
-  }
-
-  async searchUnrepliedFromSender(args: SearchArgs): Promise<SearchResponse> {
-    const sender = this.requireString(args.sender, 'sender');
-    const startDate = args.startDate ?? '';
-    const endDate = args.endDate ?? '';
-    const limit = this.normalizeLimit(args.limit, 10);
-
+  async searchMessages(args: SearchMessagesArgs): Promise<SearchResponse> {
     try {
+      const limit = this.normalizeLimit(args.limit, 50);
+      const includeBody = args.includeBody === true;
+      const normalizedArgs = this.normalizeSearchArgs(args, limit, includeBody);
       await this.dependencies.ensureIMAPConnection();
-      console.error(`[IMAP] Searching unreplied messages from sender: ${sender}`);
-
-      const fromSenderResult = await this.searchInMultipleMailboxes(
-        [['FROM', sender]],
-        'From Sender',
-        sender,
-        startDate,
-        endDate,
-        args.inboxOnly ?? false,
-        limit
-      );
-      const toSenderResult = await this.searchInMultipleMailboxes(
-        [['TO', sender]],
-        'To Sender',
-        sender,
-        startDate,
-        endDate,
-        args.inboxOnly ?? false,
-        limit
-      );
-
-      console.error(`[IMAP] Found ${fromSenderResult.messages.length} messages from sender, ${toSenderResult.messages.length} messages to sender`);
-      const unrepliedMessages = this.detectUnrepliedMessages(
-        fromSenderResult.messages,
-        toSenderResult.messages,
-        limit
-      );
+      const candidateBudget = this.createCandidateBudget();
+      const collected = await this.collectMessages(normalizedArgs, {
+        candidateBudget,
+      });
+      const selected = collected.messages
+        .sort((left, right) => this.messageTimestamp(right) - this.messageTimestamp(left))
+        .slice(0, limit);
+      const messages = includeBody
+        ? await this.hydrateMessages(selected, this.createResponseBudget())
+        : selected.map(message => this.messageForResponse(message, false));
 
       const result: SearchResult = {
-        searchType: 'Unreplied messages from sender (Advanced)',
-        searchValue: sender,
-        searchCriteria: ['FROM', sender],
-        mailboxesSearched: fromSenderResult.mailboxesSearched,
-        totalMatches: unrepliedMessages.length,
-        returnedCount: unrepliedMessages.length,
-        messages: unrepliedMessages,
-        sender,
-        note: `Found ${unrepliedMessages.length} unreplied messages from ${sender} using advanced thread-aware detection.${limit < 200 ? ` (limited to ${limit} messages per search)` : ''}`
+        query: normalizedArgs,
+        searchCriteria: collected.criteria,
+        mailboxesSearched: collected.mailboxesSearched,
+        totalMatches: collected.totalMatches,
+        returnedCount: messages.length,
+        hasMore: collected.totalMatches > messages.length,
+        messages,
+        note: `Found ${collected.totalMatches} matching messages and returned ${messages.length}`,
+        warning: collected.warning,
       };
-      if (startDate) result.startDate = startDate;
-      if (endDate) result.endDate = endDate;
-      if (startDate || endDate) result.note += ' (filtered by date range)';
 
       return this.response(result);
     } catch (error) {
-      throw new Error(this.formatError(error, 'Search unreplied from sender failed'));
+      throw new Error(this.formatError(error, 'Search messages failed'), { cause: error });
     }
   }
 
-  async searchByBody(args: SearchArgs): Promise<SearchResponse> {
-    const bodyText = this.requireString(args.text, 'text');
-    return this.runSearch(
-      args,
-      [['BODY', bodyText]],
-      'By Body Text',
-      bodyText,
-      'Search by body failed',
-      result => { result.bodyText = bodyText; }
-    );
-  }
-
-  async searchWithKeyword(args: SearchArgs): Promise<SearchResponse> {
-    const keyword = this.requireString(args.keyword, 'keyword');
-    return this.runSearch(
-      args,
-      [['KEYWORD', keyword]],
-      'With Keyword',
-      keyword,
-      'Search with keyword failed',
-      result => { result.keyword = keyword; }
-    );
-  }
-
-  async searchAllMessages(args: SearchArgs): Promise<SearchResponse> {
-    const startDate = args.startDate ?? '';
-    const endDate = args.endDate ?? '';
-    const limit = this.normalizeLimit(args.limit, 50);
-
+  async findUnrepliedMessages(args: FindUnrepliedMessagesArgs): Promise<SearchResponse> {
     try {
-      await this.dependencies.ensureIMAPConnection();
-      const result = await this.searchInMultipleMailboxes(
-        ['ALL'],
-        'All Messages',
-        '*',
-        startDate,
-        endDate,
-        args.inboxOnly ?? false,
-        limit
+      const sender = this.requireString(args.sender, 'sender');
+      const limit = this.normalizeLimit(args.limit, 50);
+      const sourceMailboxes = this.normalizeMailboxes(args.mailboxes, ['INBOX']);
+      const candidateBudget = this.createCandidateBudget();
+      const incomingQuery = this.normalizeSearchArgs(
+        {
+          mailboxes: sourceMailboxes,
+          from: sender,
+          since: args.since,
+          before: args.before,
+          limit,
+          includeBody: false,
+        },
+        limit,
+        false,
       );
-      this.addDateMetadata(result, startDate, endDate);
-      return this.response(result);
+      await this.dependencies.ensureIMAPConnection();
+      const incoming = await this.collectMessages(incomingQuery, {
+        candidateBudget,
+      });
+      if (incoming.warning) {
+        throw new Error(
+          `Reply-state analysis requires every source mailbox to succeed: ${incoming.warning}`,
+        );
+      }
+      const candidates = incoming.messages
+        .sort((left, right) => this.messageTimestamp(right) - this.messageTimestamp(left))
+        .slice(0, limit);
+
+      if (candidates.length === 0) {
+        return this.response({
+          sender,
+          sourceMailboxes,
+          sentMailbox: null,
+          totalCandidates: 0,
+          repliedCount: 0,
+          unrepliedCount: 0,
+          unknownCount: 0,
+          messages: [],
+          unknownMessages: [],
+          note: `No messages from ${sender} matched the requested range.`,
+        });
+      }
+
+      const sentMailbox = await this.dependencies.findSentMailbox();
+      if (!sentMailbox) {
+        throw new Error(
+          'Could not find a sent mailbox, so reply state cannot be determined safely',
+        );
+      }
+
+      const earliestCandidate = candidates.reduce(
+        (earliest, message) => Math.min(earliest, this.messageTimestamp(message)),
+        Number.POSITIVE_INFINITY,
+      );
+      const sentQuery = this.normalizeSearchArgs(
+        {
+          mailboxes: [sentMailbox],
+          since: Number.isFinite(earliestCandidate)
+            ? new Date(earliestCandidate).toISOString()
+            : args.since,
+          includeBody: false,
+          limit: 200,
+        },
+        200,
+        false,
+      );
+      const sent = await this.collectMessages(sentQuery, {
+        candidateBudget,
+      });
+      const replyTimestamps = this.collectReplyTimestamps(sent.messages);
+      const replied: ExtendedEmailMessage[] = [];
+      const unreplied: ExtendedEmailMessage[] = [];
+      const unknown: ExtendedEmailMessage[] = [];
+
+      for (const message of candidates) {
+        const messageId = this.normalizeMessageId(message.messageId);
+        if (!messageId) {
+          unknown.push(message);
+        } else if (
+          (replyTimestamps.get(messageId) ?? Number.NEGATIVE_INFINITY) >
+          this.messageTimestamp(message)
+        ) {
+          replied.push(message);
+        } else {
+          unreplied.push(message);
+        }
+      }
+
+      return this.response({
+        sender,
+        sourceMailboxes,
+        sentMailbox,
+        totalCandidates: candidates.length,
+        repliedCount: replied.length,
+        unrepliedCount: unreplied.length,
+        unknownCount: unknown.length,
+        messages: unreplied.map(message => this.messageForResponse(message, false)),
+        unknownMessages: unknown.map(message => ({
+          sourceMailbox: message.sourceMailbox,
+          uid: message.uid,
+          uidValidity: message.uidValidity,
+          subject: message.subject,
+          date: message.date,
+          reason: 'The message has no Message-ID header, so reply state cannot be verified.',
+        })),
+        note: 'Reply state is determined from In-Reply-To and References headers in the sent mailbox. Messages without a Message-ID are reported as unknown instead of being guessed from their subject.',
+      });
     } catch (error) {
-      throw new Error(this.formatError(error, 'Search all messages failed'));
+      throw new Error(this.formatError(error, 'Find unreplied messages failed'), { cause: error });
     }
   }
 
-  private async runSearch(
-    args: SearchArgs,
-    criteria: any[],
-    searchType: string,
-    searchValue: string,
-    errorContext: string,
-    decorate?: (result: SearchResult) => void
-  ): Promise<SearchResponse> {
-    const startDate = args.startDate ?? '';
-    const endDate = args.endDate ?? '';
-
-    try {
-      await this.dependencies.ensureIMAPConnection();
-      const result = await this.searchInMultipleMailboxes(
-        criteria,
-        searchType,
-        searchValue,
-        startDate,
-        endDate,
-        args.inboxOnly ?? false
-      );
-      decorate?.(result);
-      this.addDateMetadata(result, startDate, endDate);
-      return this.response(result);
-    } catch (error) {
-      throw new Error(this.formatError(error, errorContext));
-    }
-  }
-
-  private async searchInMultipleMailboxes(
-    criteria: any[],
-    searchType: string,
-    searchValue: string,
-    startDate = '',
-    endDate = '',
-    inboxOnly = false,
-    limit = 50
-  ): Promise<SearchResult> {
-    const sentMailbox = inboxOnly ? null : await this.dependencies.findSentMailbox();
-    const candidateMailboxes = [...new Set(sentMailbox ? ['INBOX', sentMailbox] : ['INBOX'])];
-    const effectiveLimit = this.normalizeLimit(limit, 50);
+  private async collectMessages(
+    args: SearchMessagesArgs,
+    options: CollectOptions = {},
+  ): Promise<CollectedSearch> {
     const imapClient = this.dependencies.getIMAPClient();
-    const result: SearchResult = {
-      searchType,
-      searchValue,
-      searchCriteria: criteria,
-      mailboxesSearched: [],
-      totalMatches: 0,
-      messages: []
-    };
+    const mailboxes = args.mailboxes || (await this.defaultMailboxes());
+    const criteria = this.buildCriteria(args);
+    const exactRange = this.parseExactDateRange(args.since, args.before);
+    const candidateBudget = options.candidateBudget ?? this.createCandidateBudget();
+    const messages: ExtendedEmailMessage[] = [];
+    const mailboxesSearched: MailboxSearchResult[] = [];
+    let totalMatches = 0;
+    let successfulMailboxes = 0;
 
-    for (const mailbox of candidateMailboxes) {
+    for (const mailbox of mailboxes) {
       try {
         console.error(`[IMAP] Searching in mailbox: ${mailbox}`);
         const mailboxInfo = await imapClient.openBox(mailbox, true);
         const uids = await imapClient.search(criteria);
-        const limitedUIDs = uids.slice(-effectiveLimit);
-        let messages: ExtendedEmailMessage[] = [];
-
-        if (limitedUIDs.length > 0) {
-          const fetched = await imapClient.fetchMessages(limitedUIDs);
-          messages = fetched.map(message => ({
-            ...message,
-            sourceMailbox: mailbox,
-            uidValidity: mailboxInfo.uidvalidity
-          }));
-          messages = this.filterMessagesByDateRange(messages, startDate, endDate);
-          result.messages.push(...messages);
+        // UID order is arrival order, not a reliable INTERNALDATE order (for
+        // example after imports). Inspect every bounded candidate before
+        // sorting so `limit` consistently means the newest matching messages.
+        const candidateUIDs = uids;
+        const nextUsed = candidateBudget.used + candidateUIDs.length;
+        if (nextUsed > candidateBudget.limit) {
+          throw new SearchResourceLimitError(
+            `Search would inspect ${nextUsed} message headers across the request, exceeding MAIL_MAX_SEARCH_CANDIDATES=${candidateBudget.limit}. Narrow the mailboxes, filters, or date range.`,
+          );
         }
+        candidateBudget.used = nextUsed;
+        const fetched = await this.fetchMessagesInBatches(
+          imapClient,
+          candidateUIDs,
+          false,
+          candidateBudget.headerBytes,
+        );
+        const filtered = fetched.filter(message => this.isWithinExactRange(message, exactRange));
 
-        result.mailboxesSearched.push({
+        messages.push(...filtered);
+        totalMatches += filtered.length;
+        successfulMailboxes += 1;
+        mailboxesSearched.push({
           mailbox,
           uidValidity: mailboxInfo.uidvalidity,
-          matchingUIDs: messages.map(message => message.uid),
-          messageCount: messages.length
+          totalMatches: filtered.length,
+          returnedCount: filtered.length,
         });
       } catch (error) {
+        if (error instanceof SearchResourceLimitError) throw error;
         console.error(`[IMAP] Error searching in ${mailbox}:`, error);
-        result.mailboxesSearched.push({
+        mailboxesSearched.push({
           mailbox,
+          totalMatches: 0,
+          returnedCount: 0,
           error: `Failed to search: ${error instanceof Error ? error.message : String(error)}`,
-          matchingUIDs: [],
-          messageCount: 0
         });
       }
     }
 
-    result.totalMatches = result.messages.length;
-    result.messages.sort((left, right) => new Date(right.date || 0).getTime() - new Date(left.date || 0).getTime());
-    result.messages = result.messages
-      .slice(0, effectiveLimit)
-      .map(message => this.messageForResponse(message));
-    result.returnedCount = result.messages.length;
-
-    if (result.totalMatches > 0) {
-      result.note = `Found ${result.totalMatches} matching messages and returned ${result.returnedCount} across ${result.mailboxesSearched.length} mailboxes`;
-      if (startDate || endDate) result.note += ' (filtered by date range)';
-    } else {
-      result.note = 'No messages found in any of the searched mailboxes';
-    }
-    if (!inboxOnly && !sentMailbox) {
-      result.warning = 'Could not find sent mailbox - only searched INBOX';
+    if (successfulMailboxes === 0) {
+      const errors = mailboxesSearched
+        .map(result => `${result.mailbox}: ${result.error}`)
+        .join('; ');
+      throw new Error(`All mailbox searches failed: ${errors}`);
     }
 
-    return result;
+    const failedCount = mailboxesSearched.length - successfulMailboxes;
+    return {
+      criteria,
+      mailboxesSearched,
+      messages,
+      totalMatches,
+      warning:
+        failedCount > 0
+          ? `${failedCount} mailbox search(es) failed; inspect mailboxesSearched for details.`
+          : undefined,
+    };
   }
 
-  private filterMessagesByDateRange(
-    messages: ExtendedEmailMessage[],
-    startDate?: string,
-    endDate?: string
-  ): ExtendedEmailMessage[] {
-    if (!startDate && !endDate) return messages;
-
-    const start = startDate ? this.parseFilterDate(startDate, false) : null;
-    const end = endDate ? this.parseFilterDate(endDate, true) : null;
-    if (start && end && start > end) {
-      throw new Error('startDate must not be after endDate');
-    }
-
-    return messages.filter(message => {
-      if (!message.date) return true;
-      const messageDate = new Date(message.date);
-      if (Number.isNaN(messageDate.getTime())) return true;
-      return (!start || messageDate >= start) && (!end || messageDate <= end);
-    });
+  private async defaultMailboxes(): Promise<string[]> {
+    const sentMailbox = await this.dependencies.findSentMailbox();
+    return [...new Set(sentMailbox ? ['INBOX', sentMailbox] : ['INBOX'])];
   }
 
-  private parseFilterDate(value: string, endOfDay: boolean): Date {
+  private createCandidateBudget(): SearchCandidateBudget {
+    return {
+      used: 0,
+      limit: this.dependencies.maxSearchCandidates,
+      headerBytes: {
+        used: 0,
+        limit: this.dependencies.maxSearchHeaderBytes,
+      },
+    };
+  }
+
+  private createResponseBudget(): { used: number; limit: number } {
+    const limit = this.dependencies.maxResponseCharacters;
+    if (!Number.isSafeInteger(limit) || limit <= 0) {
+      throw new Error('maxResponseCharacters must be a positive safe integer');
+    }
+    return { used: 0, limit };
+  }
+
+  private normalizeThreadSubject(subject: string): string {
+    return cleanReplySubject(subject).replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
+  private normalizeSearchArgs(
+    args: SearchMessagesArgs,
+    limit: number,
+    includeBody: boolean,
+  ): SearchMessagesArgs {
+    if (args.includeBody !== undefined && typeof args.includeBody !== 'boolean') {
+      throw new Error('includeBody must be a boolean');
+    }
+    if (args.unread !== undefined && typeof args.unread !== 'boolean') {
+      throw new Error('unread must be a boolean');
+    }
+    const normalized: SearchMessagesArgs = {
+      limit,
+      includeBody,
+    };
+    if (args.mailboxes !== undefined)
+      normalized.mailboxes = this.normalizeMailboxes(args.mailboxes);
+    if (args.from !== undefined) normalized.from = this.requireString(args.from, 'from');
+    if (args.to !== undefined) normalized.to = this.requireString(args.to, 'to');
+    if (args.subject !== undefined)
+      normalized.subject = this.requireString(args.subject, 'subject');
+    if (args.body !== undefined) normalized.body = this.requireString(args.body, 'body');
+    if (args.keywords !== undefined) normalized.keywords = this.normalizeKeywords(args.keywords);
+    if (args.unread !== undefined) normalized.unread = args.unread;
+    if (args.since !== undefined) normalized.since = this.requireString(args.since, 'since');
+    if (args.before !== undefined) normalized.before = this.requireString(args.before, 'before');
+    this.parseExactDateRange(normalized.since, normalized.before);
+    return normalized;
+  }
+
+  private buildCriteria(args: SearchMessagesArgs): any[] {
+    const criteria: any[] = [];
+    if (args.from) criteria.push(['FROM', args.from]);
+    if (args.to) criteria.push(['TO', args.to]);
+    if (args.subject) criteria.push(['SUBJECT', args.subject]);
+    if (args.body) criteria.push(['BODY', args.body]);
+    for (const keyword of args.keywords || []) criteria.push(['KEYWORD', keyword]);
+    if (args.unread === true) criteria.push('UNSEEN');
+    if (args.unread === false) criteria.push('SEEN');
+
+    if (args.since) {
+      const since = this.parseDate(args.since, 'since');
+      const startOfDay = new Date(since);
+      startOfDay.setHours(0, 0, 0, 0);
+      // IMAP SINCE compares only the calendar date embedded in INTERNALDATE
+      // and explicitly disregards its time and timezone. Imported messages
+      // can therefore have an INTERNALDATE calendar day that differs from the
+      // same instant in this process's timezone. Widen the server-side query
+      // by two days to cover the full UTC+14 to UTC-12 calendar spread, then
+      // apply the exact instant bound locally below.
+      startOfDay.setDate(startOfDay.getDate() - 2);
+      criteria.push(['SINCE', startOfDay]);
+    }
+    if (args.before) {
+      const before = this.parseDate(args.before, 'before');
+      const nextDay = new Date(before);
+      nextDay.setHours(0, 0, 0, 0);
+      if (before.getTime() > nextDay.getTime()) nextDay.setDate(nextDay.getDate() + 1);
+      // Add the matching two-day timezone margin on the exclusive upper
+      // bound. Exact filtering still uses the original timestamp.
+      nextDay.setDate(nextDay.getDate() + 2);
+      criteria.push(['BEFORE', nextDay]);
+    }
+
+    return criteria.length > 0 ? criteria : ['ALL'];
+  }
+
+  private parseExactDateRange(
+    sinceValue?: string,
+    beforeValue?: string,
+  ): { since?: Date; before?: Date } {
+    const since = sinceValue ? this.parseDate(sinceValue, 'since') : undefined;
+    const before = beforeValue ? this.parseDate(beforeValue, 'before') : undefined;
+    if (since && before && since >= before) {
+      throw new Error('since must be earlier than before');
+    }
+    return { since, before };
+  }
+
+  private parseDate(value: string, name: string): Date {
     const trimmed = value.trim();
-    const isoDateOnly = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const dateOnly = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
     let parsed: Date;
-
-    if (isoDateOnly) {
-      const [, year, month, day] = isoDateOnly;
-      parsed = new Date(
-        Number(year),
-        Number(month) - 1,
-        Number(day),
-        endOfDay ? 23 : 0,
-        endOfDay ? 59 : 0,
-        endOfDay ? 59 : 0,
-        endOfDay ? 999 : 0
-      );
+    if (dateOnly) {
+      const year = Number(dateOnly[1]);
+      const month = Number(dateOnly[2]);
+      const day = Number(dateOnly[3]);
+      parsed = new Date(year, month - 1, day);
+      if (
+        parsed.getFullYear() !== year ||
+        parsed.getMonth() !== month - 1 ||
+        parsed.getDate() !== day
+      ) {
+        throw new Error(`${name} must be a valid calendar date`);
+      }
     } else {
       parsed = new Date(trimmed);
-      if (endOfDay && this.isDateOnly(trimmed)) parsed.setHours(23, 59, 59, 999);
     }
-
-    if (Number.isNaN(parsed.getTime())) throw new Error(`Invalid date format: ${value}`);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new Error(`${name} must be a valid date or ISO date-time`);
+    }
     return parsed;
   }
 
-  private isDateOnly(value: string): boolean {
-    return [
-      /^\d{4}-\d{2}-\d{2}$/,
-      /^\d{2}-\w{3}-\d{4}$/,
-      /^\w{3}\s+\d{1,2},?\s+\d{4}$/
-    ].some(pattern => pattern.test(value.trim()));
+  private isWithinExactRange(
+    message: ExtendedEmailMessage,
+    range: { since?: Date; before?: Date },
+  ): boolean {
+    if (!range.since && !range.before) return true;
+    const timestamp = this.messageTimestamp(message);
+    if (!Number.isFinite(timestamp)) return false;
+    return (
+      (!range.since || timestamp >= range.since.getTime()) &&
+      (!range.before || timestamp < range.before.getTime())
+    );
   }
 
-  private detectUnrepliedMessages(
-    receivedMessages: ExtendedEmailMessage[],
-    sentMessages: ExtendedEmailMessage[],
-    limit: number
-  ): ExtendedEmailMessage[] {
-    const received = [...receivedMessages]
-      .sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime())
-      .slice(0, 100);
-    const sent = [...sentMessages]
-      .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
-    const unreplied: ExtendedEmailMessage[] = [];
-
-    for (const message of received) {
-      if (!this.isMessageReplied(message, sent)) unreplied.push(message);
-      if (unreplied.length >= limit) break;
-    }
-    return unreplied;
-  }
-
-  private isMessageReplied(original: ExtendedEmailMessage, sentMessages: ExtendedEmailMessage[]): boolean {
-    const originalDate = new Date(original.date);
-    const originalSubject = cleanReplySubject(original.subject || '').toLowerCase();
-
-    if (original.messageId && sentMessages.some(sent => {
-      const sentDate = new Date(sent.date);
-      return sentDate > originalDate && (
-        sent.inReplyTo === original.messageId || sent.references?.includes(original.messageId!)
+  private async fetchMessagesInBatches(
+    imapClient: IMAPClient,
+    uids: number[],
+    includeBody: boolean,
+    byteBudget?: FetchByteBudget,
+    responseBudget?: { used: number; limit: number },
+  ): Promise<ExtendedEmailMessage[]> {
+    const messages: ExtendedEmailMessage[] = [];
+    const batchSize = includeBody ? 1 : SEARCH_FETCH_BATCH_SIZE;
+    for (let offset = 0; offset < uids.length; offset += batchSize) {
+      const batch = uids.slice(offset, offset + batchSize);
+      let fetched: EmailMessage[];
+      try {
+        fetched = await imapClient.fetchMessages(
+          batch,
+          includeBody
+            ? { markSeen: false }
+            : {
+                bodies: [SEARCH_HEADER_FIELDS],
+                struct: false,
+                envelope: false,
+                markSeen: false,
+                byteBudget,
+              },
+        );
+      } catch (error) {
+        if (error instanceof FetchByteLimitError && byteBudget) {
+          throw new SearchResourceLimitError(
+            `Search would buffer more than MAIL_MAX_SEARCH_HEADER_BYTES=${byteBudget.limit} bytes of message header fields across the request. Narrow the mailboxes, filters, or date range.`,
+          );
+        }
+        throw error;
+      }
+      messages.push(
+        ...(includeBody
+          ? fetched.map(message => this.messageForResponse(message, true, responseBudget))
+          : fetched),
       );
-    })) {
-      return true;
+    }
+    return messages;
+  }
+
+  private async hydrateMessages(
+    messages: ExtendedEmailMessage[],
+    responseBudget: { used: number; limit: number },
+  ): Promise<ExtendedEmailMessage[]> {
+    const imapClient = this.dependencies.getIMAPClient();
+    const hydratedByRef = new Map<string, ExtendedEmailMessage>();
+    const byMailbox = new Map<string, ExtendedEmailMessage[]>();
+    for (const message of messages) {
+      const existing = byMailbox.get(message.sourceMailbox) || [];
+      existing.push(message);
+      byMailbox.set(message.sourceMailbox, existing);
     }
 
-    if (sentMessages.some(sent => {
-      const subject = cleanReplySubject(sent.subject || '').toLowerCase();
-      return new Date(sent.date) > originalDate && subject.length > 0 && subject === originalSubject;
-    })) {
-      return true;
+    for (const [mailbox, mailboxMessages] of byMailbox) {
+      const mailboxInfo = await imapClient.openBox(mailbox, true);
+      const expectedUidValidity = mailboxMessages[0]?.uidValidity;
+      if (expectedUidValidity !== undefined && mailboxInfo.uidvalidity !== expectedUidValidity) {
+        throw new Error(
+          `Mailbox UIDVALIDITY changed for ${mailbox}: expected ${expectedUidValidity}, got ${mailboxInfo.uidvalidity}`,
+        );
+      }
+      const fetched = await this.fetchMessagesInBatches(
+        imapClient,
+        mailboxMessages.map(message => message.uid),
+        true,
+        undefined,
+        responseBudget,
+      );
+      for (const message of fetched) {
+        hydratedByRef.set(this.messageKey(message.sourceMailbox, message.uid), message);
+      }
     }
 
-    if (originalSubject.length > 3 && sentMessages.some(sent => {
-      const subject = cleanReplySubject(sent.subject || '').toLowerCase();
-      return new Date(sent.date) > originalDate && subject !== originalSubject && subject.includes(originalSubject);
-    })) {
-      return true;
+    const missing = messages.filter(
+      message => !hydratedByRef.has(this.messageKey(message.sourceMailbox, message.uid)),
+    );
+    if (missing.length > 0) {
+      const refs = missing.map(message => `${message.sourceMailbox}/UID ${message.uid}`).join(', ');
+      throw new Error(`Messages disappeared before full-body hydration: ${refs}`);
     }
 
-    const windowEnd = new Date(originalDate.getTime() + 7 * 24 * 60 * 60 * 1000);
-    return sentMessages.some(sent => {
-      const sentDate = new Date(sent.date);
-      return sentDate > originalDate && sentDate <= windowEnd && this.isLikelyReplyByContent(original, sent);
+    return messages.map(message =>
+      hydratedByRef.get(this.messageKey(message.sourceMailbox, message.uid))!,
+    );
+  }
+
+  private messageKey(mailbox: string, uid: number): string {
+    return `${mailbox}\u0000${uid}`;
+  }
+
+  private collectReplyTimestamps(messages: ExtendedEmailMessage[]): Map<string, number> {
+    const referenced = new Map<string, number>();
+    for (const message of messages) {
+      const timestamp = this.messageTimestamp(message);
+      if (!Number.isFinite(timestamp)) continue;
+      const values = [message.inReplyTo, ...(message.references || [])];
+      for (const value of values) {
+        const normalized = this.normalizeMessageId(value);
+        if (normalized) {
+          referenced.set(
+            normalized,
+            Math.max(referenced.get(normalized) ?? Number.NEGATIVE_INFINITY, timestamp),
+          );
+        }
+      }
+    }
+    return referenced;
+  }
+
+  private normalizeMessageId(value?: string): string | null {
+    if (!value) return null;
+    const normalized = value.trim().replace(/^<|>$/g, '').toLowerCase();
+    return normalized || null;
+  }
+
+  private normalizeMailboxes(value: string[] | undefined, fallback?: string[]): string[] {
+    const mailboxes = value ?? fallback;
+    if (!Array.isArray(mailboxes) || mailboxes.length === 0) {
+      throw new Error('mailboxes must contain at least one mailbox name');
+    }
+    if (mailboxes.length > 20) throw new Error('mailboxes cannot contain more than 20 entries');
+    const normalized = mailboxes.map((mailbox, index) =>
+      this.requireString(mailbox, `mailboxes[${index}]`),
+    );
+    return [
+      ...new Map(
+        normalized.map(mailbox => [mailbox.toUpperCase() === 'INBOX' ? 'INBOX' : mailbox, mailbox]),
+      ).values(),
+    ];
+  }
+
+  private normalizeKeywords(value: string[]): string[] {
+    if (!Array.isArray(value) || value.length === 0) {
+      throw new Error('keywords must contain at least one custom IMAP keyword');
+    }
+    if (value.length > 10) throw new Error('keywords cannot contain more than 10 entries');
+    const normalized = value.map((keyword, index) => {
+      const result = this.requireString(keyword, `keywords[${index}]`);
+      if (hasUnsafeImapKeywordCharacter(result)) {
+        throw new Error(
+          `keywords[${index}] contains characters that are unsafe in an IMAP keyword`,
+        );
+      }
+      return result;
     });
+    return [...new Set(normalized)];
   }
 
-  private isLikelyReplyByContent(original: ExtendedEmailMessage, potentialReply: ExtendedEmailMessage): boolean {
-    const originalSubject = cleanReplySubject(original.subject || '').toLowerCase();
-    const replySubject = cleanReplySubject(potentialReply.subject || '').toLowerCase();
-    if (originalSubject.length > 0 && originalSubject === replySubject) return true;
-    if (originalSubject.length > 5 && replySubject.includes(originalSubject)) return true;
-
-    const originalWords = originalSubject.split(/\s+/).filter(word => word.length > 3);
-    const replyWords = replySubject.split(/\s+/).filter(word => word.length > 3);
-    if (originalWords.length === 0 || replyWords.length === 0) return false;
-    const commonWords = originalWords.filter(word => replyWords.includes(word));
-    return commonWords.length >= Math.min(2, Math.ceil(originalWords.length / 2));
-  }
-
-  private messageForResponse<T extends EmailMessage>(message: T): T & { textTruncated?: boolean; htmlTruncated?: boolean } {
+  private messageForResponse<T extends EmailMessage>(
+    message: T,
+    includeBody: boolean,
+    responseBudget?: { used: number; limit: number },
+  ): T & { textTruncated?: boolean; htmlTruncated?: boolean } {
     const result = { ...message } as T & { textTruncated?: boolean; htmlTruncated?: boolean };
+    if (!includeBody) {
+      delete result.text;
+      delete result.html;
+      return result;
+    }
+
     const limit = this.dependencies.maxBodyCharacters;
-    if (result.text && result.text.length > limit) {
+    if (result.text && result.text.length > limit && !result.textTruncated) {
       result.text = `${result.text.slice(0, limit)}\n\n[truncated]`;
       result.textTruncated = true;
     }
-    if (result.html && result.html.length > limit) {
+    if (result.html && result.html.length > limit && !result.htmlTruncated) {
       result.html = `${result.html.slice(0, limit)}<!-- truncated -->`;
       result.htmlTruncated = true;
+    }
+    if (responseBudget) {
+      const bodyCharacters = (result.text?.length || 0) + (result.html?.length || 0);
+      const nextUsed = responseBudget.used + bodyCharacters;
+      if (nextUsed > responseBudget.limit) {
+        throw new SearchResourceLimitError(
+          `Response bodies would contain ${nextUsed} characters, exceeding MAIL_MAX_RESPONSE_CHARACTERS=${responseBudget.limit}. Lower limit or retrieve messages individually with get_message.`,
+        );
+      }
+      responseBudget.used = nextUsed;
     }
     return result;
   }
 
-  private requireString(value: string | undefined, name: string): string {
-    if (!value) throw new Error(`${name} parameter is required`);
-    return value;
+  private messageTimestamp(message: EmailMessage): number {
+    const timestamp = new Date(message.date).getTime();
+    return Number.isNaN(timestamp) ? Number.NEGATIVE_INFINITY : timestamp;
+  }
+
+  private requireString(value: unknown, name: string): string {
+    if (typeof value !== 'string' || !value.trim()) {
+      throw new Error(`${name} must be a non-empty string`);
+    }
+    return value.trim();
   }
 
   private normalizeLimit(value: number | undefined, fallback: number): number {
-    return Math.min(Math.max(Number.isInteger(value) ? value! : fallback, 1), 200);
+    if (value !== undefined && (!Number.isInteger(value) || value < 1 || value > 200)) {
+      throw new Error('limit must be an integer between 1 and 200');
+    }
+    return value ?? fallback;
   }
 
-  private addDateMetadata(result: SearchResult, startDate: string, endDate: string): void {
-    if (startDate) result.startDate = startDate;
-    if (endDate) result.endDate = endDate;
-  }
-
-  private response(result: SearchResult): SearchResponse {
+  private response(result: unknown): SearchResponse {
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
   }
 
