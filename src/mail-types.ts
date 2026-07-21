@@ -1,35 +1,49 @@
-import { EmailMessage } from './imap-client.js';
+import { type EmailMessage } from './imap-client';
 
 export interface ExtendedEmailMessage extends EmailMessage {
   sourceMailbox: string;
 }
 
 export interface SearchResult {
-  searchType: string;
-  searchValue: string;
+  query: SearchMessagesArgs;
   searchCriteria: any[];
   mailboxesSearched: MailboxSearchResult[];
   totalMatches: number;
-  returnedCount?: number;
+  returnedCount: number;
+  hasMore: boolean;
   messages: ExtendedEmailMessage[];
   note?: string;
   warning?: string;
-  sender?: string;
-  recipient?: string;
-  subjectKeywords?: string;
-  bodyText?: string;
-  keyword?: string;
-  sinceDate?: string;
-  startDate?: string;
-  endDate?: string;
 }
 
 export interface MailboxSearchResult {
   mailbox: string;
   uidValidity?: number;
-  matchingUIDs: number[];
-  messageCount: number;
+  totalMatches: number;
+  returnedCount: number;
   error?: string;
+}
+
+export interface SearchMessagesArgs {
+  mailboxes?: string[];
+  from?: string;
+  to?: string;
+  subject?: string;
+  body?: string;
+  keywords?: string[];
+  unread?: boolean;
+  since?: string;
+  before?: string;
+  limit?: number;
+  includeBody?: boolean;
+}
+
+export interface FindUnrepliedMessagesArgs {
+  sender: string;
+  mailboxes?: string[];
+  since?: string;
+  before?: string;
+  limit?: number;
 }
 
 export interface ReplyInfo {
@@ -62,6 +76,17 @@ export interface ReplyToEmailArgs {
   includeOriginal?: boolean;
 }
 
+export interface ContinueEmailThreadArgs {
+  subject: string;
+  recipient?: string;
+  since?: string;
+  text?: string;
+  html?: string;
+  signature?: EmailSignature;
+  replyToAll?: boolean;
+  includeOriginal?: boolean;
+}
+
 export interface GetMessagesArgs {
   mailbox: string;
   uidValidity?: number;
@@ -80,21 +105,25 @@ export interface SendEmailArgs {
   attachments?: string[];
 }
 
-export interface SearchArgs {
-  sender?: string;
-  subject?: string;
-  recipient?: string;
-  text?: string;
-  keyword?: string;
-  date?: string;
-  startDate?: string;
-  endDate?: string;
-  inboxOnly?: boolean;
-  limit?: number;
+export interface SentFolderError {
+  stage: 'connection' | 'detect' | 'build' | 'append';
+  code:
+    | 'IMAP_CONNECTION_FAILED'
+    | 'SENT_MAILBOX_NOT_FOUND'
+    | 'RAW_MESSAGE_BUILD_FAILED'
+    | 'IMAP_APPEND_FAILED';
+  message: string;
+  mailbox?: string;
+  attempts?: Array<{
+    mailbox: string;
+    stage: 'select' | 'append';
+    outcome: 'not-appended' | 'unknown';
+    message: string;
+  }>;
 }
 
-export interface MailboxArgs {
-  mailboxName?: string;
-  readOnly?: boolean;
-  openSent?: boolean;
+export interface SentFolderSaveResult {
+  saved: boolean;
+  mailbox?: string;
+  error?: SentFolderError;
 }

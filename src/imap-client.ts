@@ -1,6 +1,7 @@
 import Imap from 'imap';
 import { EventEmitter } from 'events';
 import { simpleParser } from 'mailparser';
+import { extractEmailsFromAddressField } from './mail-utils';
 
 export interface IMAPConfig {
   host: string;
@@ -33,13 +34,15 @@ export interface EmailMessage {
   uid: number;
   sourceMailbox: string;
   uidValidity: number;
-  id?: number;
   flags: string[];
-  date: string; // 改为字符串格式，使用中国东八区时间
-  size: number;
+  /** IMAP INTERNALDATE normalized to an ISO 8601 instant. */
+  date: string;
+  /** RFC822.SIZE in bytes, or null when the IMAP server omits it. */
+  size: number | null;
   // 使用解析后的内容作为主要字段
   subject: string;
   from: string;
+  replyTo?: string;
   to: string;
   cc?: string;
   bcc?: string;
@@ -67,6 +70,83 @@ export interface MoveMessageResult {
   destinationUid?: number;
 }
 
+export interface FetchByteBudget {
+  used: number;
+  limit: number;
+}
+
+export interface FetchMessagesOptions extends Imap.FetchOptions {
+  byteBudget?: FetchByteBudget;
+}
+
+export class FetchByteLimitError extends Error {
+  constructor(
+    readonly used: number,
+    readonly limit: number,
+  ) {
+    super(`Fetch byte budget exceeded after buffering ${used} of ${limit} allowed bytes`);
+    this.name = 'FetchByteLimitError';
+  }
+}
+
+export class PartialMoveError extends Error {
+  constructor(
+    message: string,
+    readonly destinationUid?: number,
+    readonly sourceState: MessageSourceState = 'unknown',
+    readonly sourceDeletedFlag?: boolean,
+    readonly copyOutcome: 'succeeded' | 'unknown' = 'succeeded',
+  ) {
+    super(message);
+    this.name = 'PartialMoveError';
+  }
+}
+
+export type MessageSourceState = 'present' | 'absent' | 'unknown';
+
+export class DeleteMessageError extends Error {
+  constructor(
+    message: string,
+    readonly stage: 'mark-deleted' | 'expunge',
+    readonly outcome: 'not-deleted' | 'unknown',
+    readonly sourceState: MessageSourceState,
+    readonly sourceDeletedFlag?: boolean,
+  ) {
+    super(message);
+    this.name = 'DeleteMessageError';
+  }
+}
+
+export class SentAppendError extends Error {
+  constructor(
+    message: string,
+    readonly stage: 'select' | 'append',
+    readonly outcome: 'not-appended' | 'unknown',
+  ) {
+    super(message);
+    this.name = 'SentAppendError';
+  }
+}
+
+export class IMAPOperationAbortedError extends Error {
+  constructor(
+    readonly operation: string,
+    readonly terminalEvent: 'error' | 'end' | 'close',
+    detail: string,
+  ) {
+    super(`IMAP ${operation} aborted because the connection ${detail}`);
+    this.name = 'IMAPOperationAbortedError';
+  }
+}
+
+interface UIDStateInspection {
+  state: MessageSourceState;
+  deletedFlag?: boolean;
+  diagnostic?: string;
+}
+
+const MAX_HEADER_BYTES = 256 * 1024;
+
 export class IMAPClient extends EventEmitter {
   private imap: Imap | null = null;
   private config: IMAPConfig;
@@ -82,8 +162,10 @@ export class IMAPClient extends EventEmitter {
 
   async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      console.error(`[IMAP] Connecting to ${this.config.host}:${this.config.port} (TLS: ${this.config.tls})`);
-      
+      console.error(
+        `[IMAP] Connecting to ${this.config.host}:${this.config.port} (TLS: ${this.config.tls})`,
+      );
+
       const imapConfig: Imap.Config & { socketTimeout?: number } = {
         user: this.config.username,
         password: this.config.password,
@@ -92,43 +174,67 @@ export class IMAPClient extends EventEmitter {
         tls: this.config.tls || false,
         tlsOptions: {
           rejectUnauthorized: this.config.tlsRejectUnauthorized !== false,
-          servername: this.config.host
+          servername: this.config.host,
         },
         connTimeout: this.config.connTimeout ?? 60000,
         authTimeout: this.config.authTimeout ?? 30000,
         socketTimeout: this.config.socketTimeout ?? 60000,
-        keepalive: this.config.keepalive !== false
+        keepalive: this.config.keepalive !== false,
       };
 
       this.imap = new Imap(imapConfig);
+      let initialConnectionSettled = false;
+      const clearConnectionState = () => {
+        this.connected = false;
+        this.authenticated = false;
+        this.currentBox = null;
+        this.currentUidValidity = null;
+      };
+      const rejectInitialConnection = (message: string) => {
+        if (!initialConnectionSettled) {
+          initialConnectionSettled = true;
+          reject(new Error(message));
+        }
+      };
 
       this.imap.once('ready', async () => {
         console.error('[IMAP] Connection ready');
         this.connected = true;
         this.authenticated = true;
-        
+
         // 自动打开收件箱
         try {
           await this.openBox('INBOX', true); // 只读方式打开
           console.error('[IMAP] Auto-opened INBOX');
         } catch (error) {
-          console.error('[IMAP] Failed to auto-open INBOX:', error instanceof Error ? error.message : String(error));
+          console.error(
+            '[IMAP] Failed to auto-open INBOX:',
+            error instanceof Error ? error.message : String(error),
+          );
         }
-        
-        resolve();
+
+        if (!initialConnectionSettled && this.connected && this.authenticated) {
+          initialConnectionSettled = true;
+          resolve();
+        }
       });
 
-      this.imap.once('error', (error: Error) => {
+      this.imap.on('error', (error: Error) => {
         console.error('[IMAP] Connection error:', error.message);
-        reject(new Error(`IMAP connection failed: ${error.message}`));
+        clearConnectionState();
+        rejectInitialConnection(`IMAP connection failed: ${error.message}`);
       });
 
       this.imap.once('end', () => {
         console.error('[IMAP] Connection ended');
-        this.connected = false;
-        this.authenticated = false;
-        this.currentBox = null;
-        this.currentUidValidity = null;
+        clearConnectionState();
+        rejectInitialConnection('IMAP connection ended before it became ready');
+      });
+
+      this.imap.once('close', (hadError: boolean) => {
+        console.error(`[IMAP] Connection closed${hadError ? ' after an error' : ''}`);
+        clearConnectionState();
+        rejectInitialConnection('IMAP connection closed before it became ready');
       });
 
       this.imap.connect();
@@ -140,10 +246,14 @@ export class IMAPClient extends EventEmitter {
       throw new Error('Not connected or authenticated');
     }
 
-    return new Promise((resolve, reject) => {
-      this.imap!.openBox(boxName, readOnly, (error, box) => {
+    return this.runOperation(`SELECT ${boxName}`, (imap, resolve, reject) => {
+      imap.openBox(boxName, readOnly, (error, box) => {
         if (error) {
           console.error(`[IMAP] Failed to open box ${boxName}:`, error.message);
+          // node-imap clears its selected-box state when SELECT/EXAMINE fails.
+          // Keep the wrapper state aligned with the underlying client.
+          this.currentBox = null;
+          this.currentUidValidity = null;
           reject(new Error(`Failed to open mailbox: ${error.message}`));
           return;
         }
@@ -151,17 +261,17 @@ export class IMAPClient extends EventEmitter {
         console.error(`[IMAP] Opened box ${boxName}`);
         this.currentBox = boxName;
         this.currentUidValidity = box.uidvalidity;
-        
+
         const mailboxInfo: MailboxInfo = {
           name: boxName,
           messages: {
             total: box.messages.total,
             new: box.messages.new,
-            unseen: box.messages.unseen
+            unseen: box.messages.unseen,
           },
           permFlags: box.permFlags,
           uidvalidity: box.uidvalidity,
-          uidnext: box.uidnext
+          uidnext: box.uidnext,
         };
 
         resolve(mailboxInfo);
@@ -174,8 +284,8 @@ export class IMAPClient extends EventEmitter {
       throw new Error('Not connected or authenticated');
     }
 
-    return new Promise((resolve, reject) => {
-      this.imap!.getBoxes((error, boxes) => {
+    return this.runOperation('LIST', (imap, resolve, reject) => {
+      imap.getBoxes((error, boxes) => {
         if (error) {
           reject(new Error(`Failed to get boxes: ${error.message}`));
           return;
@@ -195,8 +305,8 @@ export class IMAPClient extends EventEmitter {
       await this.openBox('INBOX', true);
     }
 
-    return new Promise((resolve, reject) => {
-      this.imap!.search(criteria, (error, results) => {
+    return this.runOperation('SEARCH', (imap, resolve, reject) => {
+      imap.search(criteria, (error, results) => {
         if (error) {
           console.error('[IMAP] Search failed:', error.message);
           reject(new Error(`Search failed: ${error.message}`));
@@ -209,7 +319,7 @@ export class IMAPClient extends EventEmitter {
     });
   }
 
-  async fetchMessages(uids: number[], options: any = {}): Promise<EmailMessage[]> {
+  async fetchMessages(uids: number[], options: FetchMessagesOptions = {}): Promise<EmailMessage[]> {
     if (!this.imap) {
       throw new Error('Not connected to IMAP server');
     }
@@ -219,88 +329,117 @@ export class IMAPClient extends EventEmitter {
       await this.openBox('INBOX', true);
     }
 
-    const fetchOptions = {
+    const { byteBudget, ...imapFetchOverrides } = options;
+    const fetchOptions: Imap.FetchOptions = {
       bodies: options.bodies || ['HEADER', 'TEXT'],
-      struct: options.struct !== false,
-      envelope: options.envelope !== false,
+      // The parsed message is built from BODY data, so ENVELOPE and
+      // BODYSTRUCTURE are redundant. Keeping them disabled also ensures all
+      // variable-sized message data passes through the bounded body streams.
+      struct: options.struct === true,
+      envelope: options.envelope === true,
+      size: options.size !== false,
       markSeen: options.markSeen || false,
-      ...options
+      ...imapFetchOverrides,
     };
     const sourceMailbox = this.currentBox!;
     const uidValidity = this.currentUidValidity!;
 
-    return new Promise((resolve, reject) => {
+    return this.runOperation('FETCH', (imap, resolve, reject, confirmCommand) => {
       const messages: EmailMessage[] = [];
-      const pendingMessages: Map<number, {
-        message: Partial<EmailMessage>;
-        headers: Record<string, string>;
-        body: string;
-        rawBuffer: Buffer;
-        tooLarge: boolean;
-      }> = new Map();
-      
+      let byteBudgetExceeded = false;
+      const pendingMessages: Map<
+        number,
+        {
+          message: Partial<EmailMessage>;
+          headers: Record<string, string>;
+          rawBuffer: Buffer;
+          tooLarge: boolean;
+        }
+      > = new Map();
+
       if (uids.length === 0) {
         resolve(messages);
         return;
       }
 
-      const fetch = this.imap!.fetch(uids, fetchOptions);
+      const fetch = imap.fetch(uids, fetchOptions);
 
       fetch.on('message', (msg, seqno) => {
         console.error(`[IMAP] Processing message ${seqno}`);
-        
+
         let headers: Record<string, string> = {};
-        let body = '';
         const rawChunks: Buffer[] = [];
         let rawBytes = 0;
+        let headerBytes = 0;
         let tooLarge = false;
         const maxMessageBytes = this.config.maxMessageBytes ?? 25 * 1024 * 1024;
+        const maxHeaderBytes = Math.min(maxMessageBytes, MAX_HEADER_BYTES);
         const message: Partial<EmailMessage> = {
           uid: 0,
           sourceMailbox,
           uidValidity,
-          id: seqno,
           flags: [],
           date: '',
-          size: 0
+          size: null,
         };
 
         msg.on('body', (stream, info) => {
-          const chunks: Buffer[] = [];
+          const isHeader = String(info.which).toUpperCase().startsWith('HEADER');
+          const headerChunks: Buffer[] = [];
           stream.on('data', (chunk: Buffer) => {
-            const canBufferChunk = rawBytes + chunk.length <= maxMessageBytes;
-            if (info.which === 'HEADER' || canBufferChunk) {
-              chunks.push(chunk);
+            const messageRemaining = Math.max(0, maxMessageBytes - rawBytes);
+            const headerRemaining = isHeader
+              ? Math.max(0, maxHeaderBytes - headerBytes)
+              : messageRemaining;
+            const locallyBufferableBytes = Math.min(
+              chunk.length,
+              messageRemaining,
+              headerRemaining,
+            );
+            const budgetRemaining = byteBudget
+              ? Math.max(0, byteBudget.limit - byteBudget.used)
+              : locallyBufferableBytes;
+            const bytesToBuffer = Math.min(locallyBufferableBytes, budgetRemaining);
+            if (bytesToBuffer > 0) {
+              const bufferedChunk =
+                bytesToBuffer === chunk.length ? chunk : chunk.subarray(0, bytesToBuffer);
+              rawChunks.push(bufferedChunk);
+              rawBytes += bufferedChunk.length;
+              if (isHeader) {
+                headerChunks.push(bufferedChunk);
+                headerBytes += bufferedChunk.length;
+              }
+              if (byteBudget) byteBudget.used += bufferedChunk.length;
             }
-            if (canBufferChunk) {
-              rawChunks.push(chunk);
-              rawBytes += chunk.length;
-            } else {
+            if (byteBudget && locallyBufferableBytes > budgetRemaining) {
+              byteBudgetExceeded = true;
+            }
+            if (bytesToBuffer < chunk.length) {
               tooLarge = true;
             }
           });
-          
+
           stream.once('end', () => {
-            const buffer = Buffer.concat(chunks);
-            
-            if (info.which === 'HEADER') {
+            if (isHeader) {
               // 头部需要字符串处理来解析
-              const bufferString = buffer.toString('utf8');
+              const bufferString = Buffer.concat(headerChunks).toString('utf8');
               headers = this.parseHeaders(bufferString);
-            } else if (info.which === 'TEXT') {
-              // 正文暂时保留字符串版本（备用）
-              body = buffer.toString('utf8');
             }
+          });
+          stream.once('error', (error: Error) => {
+            reject(new Error(`Fetch body stream failed: ${error.message}`));
           });
         });
 
-        msg.once('attributes', (attrs) => {
+        msg.once('attributes', attrs => {
           message.uid = attrs.uid;
           message.flags = attrs.flags || [];
           // 存储为 ISO 8601 格式，确保跨平台一致解析
           const date = attrs.date || new Date();
           message.date = (date instanceof Date ? date : new Date(date)).toISOString();
-          message.size = attrs.size || 0;
+          const reportedSize = Number(attrs.size);
+          message.size =
+            Number.isSafeInteger(reportedSize) && reportedSize > 0 ? reportedSize : null;
         });
 
         msg.once('end', () => {
@@ -308,21 +447,29 @@ export class IMAPClient extends EventEmitter {
           pendingMessages.set(seqno, {
             message,
             headers,
-            body,
             rawBuffer: Buffer.concat(rawChunks),
             tooLarge,
           });
         });
       });
 
-      fetch.once('error', (error) => {
+      fetch.once('error', error => {
         console.error('[IMAP] Fetch error:', error.message);
         reject(new Error(`Fetch failed: ${error.message}`));
       });
 
       fetch.once('end', async () => {
+        // The tagged FETCH command has completed. Parsing is local work, so a
+        // later socket close must not turn already-received data into a false
+        // transport failure.
+        confirmCommand();
         console.error(`[IMAP] Fetch completed, parsing ${pendingMessages.size} messages`);
-        
+
+        if (byteBudgetExceeded && byteBudget) {
+          reject(new FetchByteLimitError(byteBudget.used, byteBudget.limit));
+          return;
+        }
+
         // 解析所有待处理的消息
         for (const [seqno, data] of pendingMessages) {
           try {
@@ -331,6 +478,7 @@ export class IMAPClient extends EventEmitter {
                 ...data.message,
                 subject: data.headers['subject'] || 'Message too large',
                 from: data.headers['from'] || '',
+                replyTo: data.headers['reply-to'] || undefined,
                 to: data.headers['to'] || '',
                 cc: data.headers['cc'] || undefined,
                 bcc: data.headers['bcc'] || undefined,
@@ -340,62 +488,34 @@ export class IMAPClient extends EventEmitter {
             }
             // 使用 mailparser 解析完整的邮件原始Buffer，让mailparser自动处理编码
             const parsedMail = await simpleParser(data.rawBuffer);
-            
-            // 提取纯邮箱地址的辅助函数
-            const extractEmailAddress = (addressObj: any): string => {
-              if (!addressObj) return '';
-              
-              // 处理数组情况
-              if (Array.isArray(addressObj)) {
-                return addressObj.map(addr => extractSingleEmail(addr)).filter(Boolean).join(', ');
-              }
-              
-              return extractSingleEmail(addressObj);
-            };
-            
-            // 从单个地址对象中提取邮箱地址
-            const extractSingleEmail = (addr: any): string => {
-              if (!addr) return '';
-              
-              // 如果是字符串，尝试从中提取邮箱
-              if (typeof addr === 'string') {
-                // 匹配 "name" <email@domain.com> 或 email@domain.com 格式
-                const emailMatch = addr.match(/<([^>]+)>/) || addr.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
-                return emailMatch ? emailMatch[1] : addr;
-              }
-              
-              // 如果是对象，优先取 address 属性
-              if (addr && typeof addr === 'object') {
-                if (addr.address) return addr.address;
-                if (addr.text) {
-                  // 从 text 中提取邮箱
-                  const emailMatch = addr.text.match(/<([^>]+)>/) || addr.text.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
-                  return emailMatch ? emailMatch[1] : addr.text;
-                }
-              }
-              
-              return '';
-            };
-            
+
+            const extractEmailAddress = (addressObj: unknown): string =>
+              extractEmailsFromAddressField(addressObj).join(', ');
+
             // 提取附件元数据（不含内容Buffer）
-            const attachmentsMeta: AttachmentMeta[] = (parsedMail.attachments || []).map((att, idx) => ({
-              index: idx,
-              filename: att.filename || `attachment_${idx + 1}${att.contentType ? '.' + att.contentType.split('/')[1]?.split(';')[0] || '' : ''}`,
-              contentType: att.contentType || 'application/octet-stream',
-              size: att.size || (att.content ? att.content.length : 0),
-              contentId: att.contentId || undefined,
-              contentDisposition: att.contentDisposition || undefined,
-            }));
+            const attachmentsMeta: AttachmentMeta[] = (parsedMail.attachments || []).map(
+              (att, idx) => ({
+                index: idx,
+                filename:
+                  att.filename ||
+                  `attachment_${idx + 1}${att.contentType ? '.' + att.contentType.split('/')[1]?.split(';')[0] || '' : ''}`,
+                contentType: att.contentType || 'application/octet-stream',
+                size: att.size || (att.content ? att.content.length : 0),
+                contentId: att.contentId || undefined,
+                contentDisposition: att.contentDisposition || undefined,
+              }),
+            );
 
             messages.push({
               ...data.message,
               subject: parsedMail.subject || 'No Subject',
               from: extractEmailAddress(parsedMail.from),
+              replyTo: extractEmailAddress(parsedMail.replyTo) || undefined,
               to: extractEmailAddress(parsedMail.to),
               cc: extractEmailAddress(parsedMail.cc) || undefined,
               bcc: extractEmailAddress(parsedMail.bcc) || undefined,
               text: parsedMail.text,
-              html: parsedMail.html,
+              html: typeof parsedMail.html === 'string' ? parsedMail.html : undefined,
               attachments: attachmentsMeta.length > 0 ? attachmentsMeta : undefined,
               messageId: parsedMail.messageId || undefined,
               inReplyTo: parsedMail.inReplyTo || undefined,
@@ -412,14 +532,15 @@ export class IMAPClient extends EventEmitter {
               ...data.message,
               subject: data.headers['subject'] || 'Parse Failed',
               from: data.headers['from'] || '',
+              replyTo: data.headers['reply-to'] || undefined,
               to: data.headers['to'] || '',
               cc: data.headers['cc'] || undefined,
               bcc: data.headers['bcc'] || undefined,
-              text: data.body.trim()
+              text: data.rawBuffer.toString('utf8').trim(),
             } as EmailMessage);
           }
         }
-        
+
         console.error(`[IMAP] All messages parsed, returning ${messages.length} messages`);
         resolve(messages);
       });
@@ -434,7 +555,7 @@ export class IMAPClient extends EventEmitter {
     return messages[0];
   }
 
-  async fetchMessageAttachments(uid: number): Promise<AttachmentData[]> {
+  async fetchMessageAttachments(uid: number, maxBytes?: number): Promise<AttachmentData[]> {
     if (!this.imap) {
       throw new Error('Not connected to IMAP server');
     }
@@ -443,37 +564,56 @@ export class IMAPClient extends EventEmitter {
       await this.openBox('INBOX', true);
     }
 
-    return new Promise((resolve, reject) => {
+    return this.runOperation('FETCH attachments', (imap, resolve, reject, confirmCommand) => {
       const rawChunks: Buffer[] = [];
+      const effectiveMaxBytes = maxBytes ?? this.config.maxMessageBytes ?? 25 * 1024 * 1024;
+      let rawBytes = 0;
+      let tooLarge = false;
 
-      const fetch = this.imap!.fetch([uid], {
+      const fetch = imap.fetch([uid], {
         bodies: ['HEADER', 'TEXT'],
-        struct: true,
+        struct: false,
+        envelope: false,
+        size: true,
         markSeen: false,
       });
 
-      fetch.on('message', (msg) => {
-        msg.on('body', (stream) => {
-          const chunks: Buffer[] = [];
+      fetch.on('message', msg => {
+        msg.on('body', stream => {
           stream.on('data', (chunk: Buffer) => {
-            chunks.push(chunk);
-            rawChunks.push(chunk);
+            if (rawBytes + chunk.length <= effectiveMaxBytes) {
+              rawChunks.push(chunk);
+              rawBytes += chunk.length;
+            } else {
+              tooLarge = true;
+            }
+          });
+          stream.once('error', (error: Error) => {
+            reject(new Error(`Fetch attachment body stream failed: ${error.message}`));
           });
         });
       });
 
-      fetch.once('error', (error) => {
+      fetch.once('error', error => {
         reject(new Error(`Fetch attachments failed: ${error.message}`));
       });
 
       fetch.once('end', async () => {
+        confirmCommand();
         try {
+          if (tooLarge) {
+            throw new Error(
+              `Message exceeds the configured attachment processing limit of ${effectiveMaxBytes} bytes`,
+            );
+          }
           const rawBuffer = Buffer.concat(rawChunks);
           const parsedMail = await simpleParser(rawBuffer);
 
           const attachments: AttachmentData[] = (parsedMail.attachments || []).map((att, idx) => ({
             index: idx,
-            filename: att.filename || `attachment_${idx + 1}${att.contentType ? '.' + att.contentType.split('/')[1]?.split(';')[0] || '' : ''}`,
+            filename:
+              att.filename ||
+              `attachment_${idx + 1}${att.contentType ? '.' + att.contentType.split('/')[1]?.split(';')[0] || '' : ''}`,
             contentType: att.contentType || 'application/octet-stream',
             size: att.size || (att.content ? att.content.length : 0),
             contentId: att.contentId || undefined,
@@ -483,43 +623,78 @@ export class IMAPClient extends EventEmitter {
 
           resolve(attachments);
         } catch (error) {
-          reject(new Error(`Failed to parse attachments: ${error instanceof Error ? error.message : String(error)}`));
+          reject(
+            new Error(
+              `Failed to parse attachments: ${error instanceof Error ? error.message : String(error)}`,
+            ),
+          );
         }
       });
     });
   }
 
-  async deleteMessage(uid: number): Promise<void> {
+  async deleteMessage(uid: number, expectedUidValidity?: number): Promise<void> {
     if (!this.imap) {
       throw new Error('Not connected to IMAP server');
     }
+    if (!Number.isSafeInteger(uid) || uid <= 0) {
+      throw new Error('Message UID must be a positive integer');
+    }
 
-    // 强制以写模式重新打开邮箱，防止之前以只读模式打开后删除失败
-    await this.openBox(this.currentBox || 'INBOX', false);
+    // A plain EXPUNGE removes every message carrying \Deleted in the selected
+    // mailbox. Refuse to delete unless the server supports targeted UID EXPUNGE.
+    if (!this.imap.serverSupports('UIDPLUS')) {
+      throw new Error('Safe permanent deletion requires IMAP UIDPLUS support');
+    }
 
-    return new Promise((resolve, reject) => {
-      this.imap!.addFlags(uid, ['\\Deleted'], (error) => {
-        if (error) {
-          console.error(`[IMAP] Failed to mark message ${uid} as deleted:`, error.message);
-          reject(new Error(`Failed to delete message: ${error.message}`));
-          return;
-        }
+    const sourceMailbox = this.currentBox || 'INBOX';
+    const sourceMailboxInfo = await this.openBox(sourceMailbox, false);
+    if (
+      expectedUidValidity !== undefined &&
+      sourceMailboxInfo.uidvalidity !== expectedUidValidity
+    ) {
+      throw new Error(
+        `Mailbox UIDVALIDITY changed for ${sourceMailbox}: expected ${expectedUidValidity}, got ${sourceMailboxInfo.uidvalidity}. Refresh the message reference before retrying.`,
+      );
+    }
+    await this.assertUIDExists(uid);
 
-        console.error(`[IMAP] Message ${uid} marked for deletion`);
-        
-        // 执行 expunge 来真正删除消息
-        this.imap!.expunge((expungeError) => {
-          if (expungeError) {
-            console.error('[IMAP] Failed to expunge:', expungeError.message);
-            reject(new Error(`Failed to expunge deleted messages: ${expungeError.message}`));
-            return;
-          }
-          
-          console.error(`[IMAP] Message ${uid} deleted successfully`);
-          resolve();
-        });
-      });
-    });
+    try {
+      await this.addDeletedFlag(uid);
+    } catch (error) {
+      console.error(
+        `[IMAP] Failed to mark message ${uid} as deleted:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      await this.resolveDeleteFailure(
+        uid,
+        sourceMailbox,
+        sourceMailboxInfo.uidvalidity,
+        'mark-deleted',
+        error,
+      );
+      return;
+    }
+
+    console.error(`[IMAP] Message ${uid} marked for deletion`);
+    try {
+      await this.uidExpunge(uid);
+    } catch (error) {
+      console.error(
+        `[IMAP] Failed to UID EXPUNGE message ${uid}:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      await this.resolveDeleteFailure(
+        uid,
+        sourceMailbox,
+        sourceMailboxInfo.uidvalidity,
+        'expunge',
+        error,
+      );
+      return;
+    }
+
+    console.error(`[IMAP] Message ${uid} deleted successfully`);
   }
 
   async moveMessage(uid: number, targetMailbox: string): Promise<MoveMessageResult> {
@@ -530,6 +705,7 @@ export class IMAPClient extends EventEmitter {
       throw new Error('No source mailbox is currently open');
     }
     const sourceMailbox = this.currentBox;
+    const sourceUidValidity = this.currentUidValidity;
     if (!Number.isSafeInteger(uid) || uid <= 0) {
       throw new Error('Message UID must be a positive integer');
     }
@@ -539,71 +715,301 @@ export class IMAPClient extends EventEmitter {
       throw new Error('Target mailbox must be a non-empty string');
     }
 
-    const bothInbox = sourceMailbox.toUpperCase() === 'INBOX' && normalizedTarget.toUpperCase() === 'INBOX';
+    const bothInbox =
+      sourceMailbox.toUpperCase() === 'INBOX' && normalizedTarget.toUpperCase() === 'INBOX';
     if (sourceMailbox === normalizedTarget || bothInbox) {
       throw new Error('Target mailbox must be different from the source mailbox');
     }
 
-    type MoveCallback = (error: Error | null, newUIDs?: number | string) => void;
-    const move = this.imap.move.bind(this.imap) as unknown as (
-      source: number,
-      mailboxName: string,
-      callback: MoveCallback
-    ) => void;
+    // node-imap's legacy fallback uses global EXPUNGE and temporarily changes
+    // unrelated \Deleted flags when both capabilities are missing.
+    if (!this.imap.serverSupports('MOVE') && !this.imap.serverSupports('UIDPLUS')) {
+      throw new Error('Safe message moving requires IMAP MOVE or UIDPLUS support');
+    }
+    await this.assertUIDExists(uid);
 
-    return new Promise((resolve, reject) => {
+    if (this.imap.serverSupports('MOVE')) {
+      type MoveCallback = (error: Error | null, newUIDs?: number | string) => void;
       try {
-        move(uid, normalizedTarget, (error, newUIDs) => {
-          if (error) {
-            console.error(
-              `[IMAP] Failed to move message ${sourceMailbox}/UID ${uid} to ${normalizedTarget}:`,
-              error.message
+        return await this.runOperation('UID MOVE', (imap, resolve, reject) => {
+          const move = imap.move.bind(imap) as unknown as (
+            source: number,
+            mailboxName: string,
+            callback: MoveCallback,
+          ) => void;
+          try {
+            move(uid, normalizedTarget, (error, newUIDs) => {
+              const destinationUid = this.parseDestinationUid(newUIDs);
+              if (error && destinationUid !== undefined) {
+                reject(
+                  new PartialMoveError(
+                    `IMAP MOVE partially completed: ${error.message}`,
+                    destinationUid,
+                  ),
+                );
+                return;
+              }
+              if (error) {
+                reject(new Error(`IMAP MOVE failed: ${error.message}`));
+                return;
+              }
+              console.error(
+                `[IMAP] Moved message ${sourceMailbox}/UID ${uid} to ${normalizedTarget}` +
+                  (destinationUid ? `/UID ${destinationUid}` : ''),
+              );
+              resolve(destinationUid === undefined ? {} : { destinationUid });
+            });
+          } catch (error) {
+            reject(
+              new Error(
+                `IMAP MOVE failed: ${error instanceof Error ? error.message : String(error)}`,
+              ),
             );
-            reject(new Error(`IMAP MOVE failed: ${error.message}`));
-            return;
           }
-
-          const numericUid = typeof newUIDs === 'string' && /^\d+$/.test(newUIDs)
-            ? Number(newUIDs)
-            : newUIDs;
-          const destinationUid = typeof numericUid === 'number'
-            && Number.isSafeInteger(numericUid)
-            && numericUid > 0
-            ? numericUid
-            : undefined;
-
-          console.error(
-            `[IMAP] Moved message ${sourceMailbox}/UID ${uid} to ${normalizedTarget}`
-            + (destinationUid ? `/UID ${destinationUid}` : '')
-          );
-          resolve(destinationUid === undefined ? {} : { destinationUid });
         });
       } catch (error) {
-        reject(new Error(`IMAP MOVE failed: ${error instanceof Error ? error.message : String(error)}`));
+        if (error instanceof PartialMoveError) throw error;
+        if (error instanceof IMAPOperationAbortedError) {
+          throw new PartialMoveError(
+            `IMAP MOVE outcome could not be confirmed: ${error.message}`,
+            undefined,
+            'unknown',
+            undefined,
+            'unknown',
+          );
+        }
+        throw error;
       }
+    }
+
+    // Implement the UIDPLUS fallback explicitly instead of delegating to
+    // node-imap's opaque COPY + cleanup sequence. Once COPY succeeds, every
+    // cleanup error is a partial move even when the server omits COPYUID.
+    let destinationUid: number | undefined;
+    try {
+      destinationUid = await this.runOperation<number | undefined>(
+        'UID COPY',
+        (imap, resolve, reject) => {
+          type CopyCallback = (error: Error | null, newUIDs?: number | string) => void;
+          const copy = imap.copy.bind(imap) as unknown as (
+            source: number,
+            mailboxName: string,
+            callback: CopyCallback,
+          ) => void;
+          try {
+            copy(uid, normalizedTarget, (error, newUIDs) => {
+              if (error) {
+                reject(new Error(`IMAP COPY failed: ${error.message}`));
+                return;
+              }
+              resolve(this.parseDestinationUid(newUIDs));
+            });
+          } catch (error) {
+            reject(
+              new Error(
+                `IMAP COPY failed: ${error instanceof Error ? error.message : String(error)}`,
+              ),
+            );
+          }
+        },
+      );
+    } catch (error) {
+      if (error instanceof IMAPOperationAbortedError) {
+        throw new PartialMoveError(
+          `IMAP COPY outcome could not be confirmed: ${error.message}`,
+          undefined,
+          'unknown',
+          undefined,
+          'unknown',
+        );
+      }
+      throw error;
+    }
+
+    try {
+      await this.addDeletedFlag(uid);
+    } catch (error) {
+      const source = await this.recoverMoveSourceState(uid, sourceMailbox, sourceUidValidity);
+      if (source.state === 'absent') {
+        console.error(
+          `[IMAP] Source UID ${uid} disappeared after COPY; treating the requested move end state as complete`,
+        );
+        return destinationUid === undefined ? {} : { destinationUid };
+      }
+      throw new PartialMoveError(
+        `IMAP MOVE partially completed: destination copy was created, but the source could not be marked deleted: ${error instanceof Error ? error.message : String(error)}${source.diagnostic ? `; source verification: ${source.diagnostic}` : ''}`,
+        destinationUid,
+        source.state,
+        source.deletedFlag,
+      );
+    }
+
+    try {
+      await this.uidExpunge(uid);
+    } catch (error) {
+      const source = await this.recoverMoveSourceState(uid, sourceMailbox, sourceUidValidity);
+      if (source.state === 'absent') {
+        console.error(
+          `[IMAP] Source UID ${uid} is absent after an EXPUNGE error; treating the requested move end state as complete`,
+        );
+        return destinationUid === undefined ? {} : { destinationUid };
+      }
+      throw new PartialMoveError(
+        `IMAP MOVE partially completed: destination copy was created, but source cleanup failed: ${error instanceof Error ? error.message : String(error)}${source.diagnostic ? `; source verification: ${source.diagnostic}` : ''}`,
+        destinationUid,
+        source.state,
+        source.deletedFlag,
+      );
+    }
+
+    console.error(
+      `[IMAP] Moved message ${sourceMailbox}/UID ${uid} to ${normalizedTarget} using UIDPLUS fallback` +
+        (destinationUid ? `/UID ${destinationUid}` : ''),
+    );
+    return destinationUid === undefined ? {} : { destinationUid };
+  }
+
+  private parseDestinationUid(value?: number | string): number | undefined {
+    const numericUid = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
+    return typeof numericUid === 'number' && Number.isSafeInteger(numericUid) && numericUid > 0
+      ? numericUid
+      : undefined;
+  }
+
+  private async addDeletedFlag(uid: number): Promise<void> {
+    await this.runOperation<void>('UID STORE +\\Deleted', (imap, resolve, reject) => {
+      imap.addFlags(uid, ['\\Deleted'], error => (error ? reject(error) : resolve()));
     });
   }
 
-  async getMessageCount(): Promise<number> {
-    // 始终从 INBOX 取数量，不依赖外部的当前邮箱状态
-    const boxInfo = await this.openBox('INBOX', true);
-    return boxInfo.messages.total;
+  private async removeDeletedFlag(uid: number): Promise<void> {
+    await this.runOperation<void>('UID STORE -\\Deleted', (imap, resolve, reject) => {
+      imap.delFlags(uid, ['\\Deleted'], error => (error ? reject(error) : resolve()));
+    });
   }
 
-  async getUnseenMessages(limit: number = 50): Promise<EmailMessage[]> {
-    // 始终从 INBOX 取，不依赖外部的当前邮箱状态
-    await this.openBox('INBOX', true);
-    const unseenUids = await this.search(['UNSEEN']);
-    const limitedUids = unseenUids.slice(-limit);
-    return this.fetchMessages(limitedUids);
+  private async uidExpunge(uid: number): Promise<void> {
+    await this.runOperation<void>('UID EXPUNGE', (imap, resolve, reject) => {
+      imap.expunge(uid, error => (error ? reject(error) : resolve()));
+    });
   }
 
-  async getRecentMessages(limit: number = 50): Promise<EmailMessage[]> {
-    // 始终从 INBOX 取，不依赖外部的当前邮箱状态
-    await this.openBox('INBOX', true);
-    const allUids = await this.search(['ALL']);
-    const limitedUids = allUids.slice(-limit);
-    return this.fetchMessages(limitedUids);
+  private async inspectUIDState(
+    uid: number,
+    mailbox: string,
+    expectedUidValidity: number | null,
+  ): Promise<UIDStateInspection> {
+    try {
+      const mailboxInfo = await this.openBox(mailbox, true);
+      if (expectedUidValidity !== null && mailboxInfo.uidvalidity !== expectedUidValidity) {
+        return {
+          state: 'unknown',
+          diagnostic: `UIDVALIDITY changed from ${expectedUidValidity} to ${mailboxInfo.uidvalidity}`,
+        };
+      }
+      const matches = await this.search([['UID', uid]]);
+      if (!matches.includes(uid)) return { state: 'absent' };
+      const deletedMatches = await this.search(['DELETED', ['UID', uid]]);
+      const verifiedMatches = await this.search([['UID', uid]]);
+      if (!verifiedMatches.includes(uid)) return { state: 'absent' };
+      return { state: 'present', deletedFlag: deletedMatches.includes(uid) };
+    } catch (error) {
+      return {
+        state: 'unknown',
+        diagnostic: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async recoverMoveSourceState(
+    uid: number,
+    mailbox: string,
+    expectedUidValidity: number | null,
+  ): Promise<UIDStateInspection> {
+    let inspection = await this.inspectUIDState(uid, mailbox, expectedUidValidity);
+    if (inspection.state !== 'present' || inspection.deletedFlag !== true) return inspection;
+
+    try {
+      const mailboxInfo = await this.openBox(mailbox, false);
+      if (expectedUidValidity !== null && mailboxInfo.uidvalidity !== expectedUidValidity) {
+        return {
+          state: 'unknown',
+          diagnostic: `UIDVALIDITY changed from ${expectedUidValidity} to ${mailboxInfo.uidvalidity} before rollback`,
+        };
+      }
+      await this.removeDeletedFlag(uid);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      const verified = await this.inspectUIDState(uid, mailbox, expectedUidValidity);
+      return {
+        ...verified,
+        diagnostic: verified.diagnostic
+          ? `rollback failed: ${detail}; ${verified.diagnostic}`
+          : `rollback failed: ${detail}`,
+      };
+    }
+
+    inspection = await this.inspectUIDState(uid, mailbox, expectedUidValidity);
+    return inspection.diagnostic
+      ? inspection
+      : {
+          ...inspection,
+          diagnostic: 'the \\Deleted flag was rolled back before reporting the partial move',
+        };
+  }
+
+  private async resolveDeleteFailure(
+    uid: number,
+    mailbox: string,
+    expectedUidValidity: number,
+    stage: 'mark-deleted' | 'expunge',
+    originalError: unknown,
+  ): Promise<void> {
+    const source = await this.recoverMoveSourceState(uid, mailbox, expectedUidValidity);
+    if (source.state === 'absent') {
+      const article = stage === 'expunge' ? 'an' : 'a';
+      console.error(
+        `[IMAP] UID ${uid} is absent after ${article} ${stage} error; the requested deletion end state was reached`,
+      );
+      return;
+    }
+
+    const outcome = source.state === 'present' ? 'not-deleted' : 'unknown';
+    const detail = originalError instanceof Error ? originalError.message : String(originalError);
+    throw new DeleteMessageError(
+      `Deletion failed during ${stage}: ${detail}${source.diagnostic ? `; source verification: ${source.diagnostic}` : ''}`,
+      stage,
+      outcome,
+      source.state,
+      source.deletedFlag,
+    );
+  }
+
+  private async assertUIDExists(uid: number): Promise<void> {
+    await this.assertUIDsExist([uid]);
+  }
+
+  async assertUIDsExist(uids: number[]): Promise<void> {
+    if (
+      !Array.isArray(uids) ||
+      uids.length === 0 ||
+      uids.some(uid => !Number.isSafeInteger(uid) || uid <= 0)
+    ) {
+      throw new Error('Message UIDs must be a non-empty array of positive integers');
+    }
+    const matches = await this.search([['UID', ...uids]]);
+    const matched = new Set(matches);
+    const missing = uids.filter(uid => !matched.has(uid));
+    if (missing.length === 1) {
+      throw new Error(
+        `Message with UID ${missing[0]} was not found in mailbox ${this.currentBox || 'INBOX'}`,
+      );
+    }
+    if (missing.length > 1) {
+      throw new Error(
+        `Messages with UIDs ${missing.join(', ')} were not found in mailbox ${this.currentBox || 'INBOX'}`,
+      );
+    }
   }
 
   private parseHeaders(headerText: string): Record<string, string> {
@@ -621,7 +1027,7 @@ export class IMAPClient extends EventEmitter {
         if (currentHeader) {
           headers[currentHeader.toLowerCase()] = currentValue.trim();
         }
-        
+
         // 开始新的头部
         const colonIndex = line.indexOf(':');
         if (colonIndex > -1) {
@@ -633,7 +1039,7 @@ export class IMAPClient extends EventEmitter {
         }
       }
     }
-    
+
     // 保存最后一个头部
     if (currentHeader) {
       headers[currentHeader.toLowerCase()] = currentValue.trim();
@@ -642,13 +1048,83 @@ export class IMAPClient extends EventEmitter {
     return headers;
   }
 
+  private runOperation<T>(
+    operation: string,
+    execute: (
+      imap: Imap,
+      resolve: (value: T | PromiseLike<T>) => void,
+      reject: (reason?: unknown) => void,
+      confirmCommand: () => void,
+    ) => void,
+  ): Promise<T> {
+    const imap = this.imap;
+    if (!imap) {
+      return Promise.reject(new Error('Not connected to IMAP server'));
+    }
+
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const listenForTermination =
+        typeof imap.once === 'function' && typeof imap.removeListener === 'function';
+      const cleanup = () => {
+        if (!listenForTermination) return;
+        imap.removeListener('error', onError);
+        imap.removeListener('end', onEnd);
+        imap.removeListener('close', onClose);
+      };
+      const settle = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        callback();
+      };
+      const succeed = (value: T | PromiseLike<T>) => settle(() => resolve(value));
+      const fail = (reason?: unknown) => settle(() => reject(reason));
+      const onError = (error: Error) =>
+        fail(new IMAPOperationAbortedError(operation, 'error', `failed: ${error.message}`));
+      const onEnd = () =>
+        fail(
+          new IMAPOperationAbortedError(
+            operation,
+            'end',
+            'ended before the server confirmed the command',
+          ),
+        );
+      const onClose = (hadError: boolean) =>
+        fail(
+          new IMAPOperationAbortedError(
+            operation,
+            'close',
+            `closed${hadError ? ' after an error' : ''} before the server confirmed the command`,
+          ),
+        );
+
+      if (listenForTermination) {
+        imap.once('error', onError);
+        imap.once('end', onEnd);
+        imap.once('close', onClose);
+      }
+      try {
+        execute(imap, succeed, fail, cleanup);
+      } catch (error) {
+        fail(error);
+      }
+    });
+  }
+
   async disconnect(): Promise<void> {
     if (!this.imap) {
       return; // 已经没有连接对象
     }
 
     if (!this.connected) {
-      // 如果状态显示未连接，直接清理
+      // A close/error event may have cleared wrapper state before the socket
+      // was fully released. Destroy the underlying connection defensively.
+      try {
+        this.imap.destroy();
+      } catch {
+        // The socket may already be closed.
+      }
       this.imap = null;
       this.authenticated = false;
       this.currentBox = null;
@@ -656,50 +1132,41 @@ export class IMAPClient extends EventEmitter {
       return;
     }
 
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        console.error('[IMAP] Disconnect timeout, forcing cleanup');
+    const imap = this.imap;
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = (message: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        console.error(message);
         this.connected = false;
         this.authenticated = false;
         this.currentBox = null;
         this.currentUidValidity = null;
         this.imap = null;
         resolve();
+      };
+      const timeout = setTimeout(() => {
+        try {
+          imap.destroy();
+        } catch {
+          // Best-effort forced cleanup.
+        }
+        finish('[IMAP] Disconnect timeout, forced socket cleanup');
       }, 5000); // 5秒超时
 
-      this.imap!.once('end', () => {
-        clearTimeout(timeout);
-        console.error('[IMAP] Disconnected');
-        this.connected = false;
-        this.authenticated = false;
-        this.currentBox = null;
-        this.currentUidValidity = null;
-        this.imap = null;
-        resolve();
-      });
+      imap.once('end', () => finish('[IMAP] Disconnected'));
+      imap.once('close', () => finish('[IMAP] Connection closed during disconnect'));
 
-      this.imap!.once('error', (error: Error) => {
-        clearTimeout(timeout);
-        console.error('[IMAP] Disconnect error:', error.message);
-        this.connected = false;
-        this.authenticated = false;
-        this.currentBox = null;
-        this.currentUidValidity = null;
-        this.imap = null;
-        resolve(); // 即使有错误也要resolve，因为目标是断开连接
-      });
-      
+      imap.once('error', (error: Error) => finish(`[IMAP] Disconnect error: ${error.message}`));
+
       try {
-        this.imap!.end();
+        imap.end();
       } catch (error) {
-        clearTimeout(timeout);
-        console.error('[IMAP] Error calling end():', error);
-        this.connected = false;
-        this.authenticated = false;
-        this.currentBox = null;
-        this.currentUidValidity = null;
-        this.imap = null;
-        resolve();
+        finish(
+          `[IMAP] Error calling end(): ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     });
   }
@@ -726,16 +1193,57 @@ export class IMAPClient extends EventEmitter {
       throw new Error('IMAP client is not connected');
     }
 
-    return new Promise((resolve, reject) => {
-      this.imap!.append(messageContent, { mailbox: folderName }, (err) => {
-        if (err) {
-          console.error(`[IMAP] Failed to save message to ${folderName}:`, err.message);
-          reject(new Error(`Failed to save message to ${folderName}: ${err.message}`));
-          return;
-        }
-        console.error(`[IMAP] Message successfully saved to ${folderName}`);
-        resolve();
+    // Some IMAP servers reject APPEND while any mailbox is selected read-only,
+    // even when APPEND names a different destination mailbox. Select the sent
+    // mailbox read-write first so the operation works with those servers.
+    try {
+      await this.openBox(folderName, false);
+    } catch (error) {
+      throw new SentAppendError(
+        `Could not select sent mailbox ${folderName} read-write: ${error instanceof Error ? error.message : String(error)}`,
+        'select',
+        'not-appended',
+      );
+    }
+
+    try {
+      await this.runOperation<void>(`APPEND ${folderName}`, (imap, resolve, reject) => {
+        imap.append(
+          messageContent,
+          {
+            mailbox: folderName,
+            flags: ['\\Seen'],
+            date: new Date(),
+          },
+          err => {
+            if (err) {
+              console.error(`[IMAP] Failed to save message to ${folderName}:`, err.message);
+              const responseType = String(
+                (err as Error & { type?: unknown }).type || '',
+              ).toLowerCase();
+              const outcome =
+                responseType === 'no' || responseType === 'bad' ? 'not-appended' : 'unknown';
+              reject(
+                new SentAppendError(
+                  `Failed to save message to ${folderName}: ${err.message}`,
+                  'append',
+                  outcome,
+                ),
+              );
+              return;
+            }
+            console.error(`[IMAP] Message successfully saved to ${folderName}`);
+            resolve();
+          },
+        );
       });
-    });
+    } catch (error) {
+      if (error instanceof SentAppendError) throw error;
+      throw new SentAppendError(
+        `Failed to save message to ${folderName}: ${error instanceof Error ? error.message : String(error)}`,
+        'append',
+        'unknown',
+      );
+    }
   }
 }

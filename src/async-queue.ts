@@ -5,7 +5,7 @@ export class SerialTaskQueue {
     const result = this.tail.then(task);
     this.tail = result.then(
       () => undefined,
-      () => undefined
+      () => undefined,
     );
     return result;
   }

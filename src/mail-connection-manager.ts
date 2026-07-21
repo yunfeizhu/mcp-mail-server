@@ -1,6 +1,6 @@
-import { EMAIL_CONFIG } from './config.js';
-import { IMAPClient, IMAPConfig } from './imap-client.js';
-import { SMTPClient, SMTPConfig } from './smtp-client.js';
+import { EMAIL_CONFIG } from './config';
+import { IMAPClient, type IMAPConfig } from './imap-client';
+import { SMTPClient, type SMTPConfig } from './smtp-client';
 
 const COMMON_SENT_MAILBOX_NAMES = [
   'INBOX.Sent',
@@ -16,7 +16,7 @@ export class MailConnectionManager {
   private smtpClient: SMTPClient | null = null;
   private isInitializingIMAP = false;
   private isInitializingSMTP = false;
-  private sentMailboxName: string | null | undefined;
+  private sentMailboxName: string | undefined;
 
   get imap(): IMAPClient {
     if (!this.imapClient) throw new Error('IMAP client is not connected');
@@ -83,34 +83,69 @@ export class MailConnectionManager {
   }
 
   async findSentMailbox(): Promise<string | null> {
-    if (this.sentMailboxName !== undefined) return this.sentMailboxName;
-
-    try {
-      const boxes = await this.imap.getBoxes();
-      const byAttribute = this.findMailboxBySentAttribute(boxes);
-      if (byAttribute) {
-        console.error(`[IMAP] Sent mailbox found via \\Sent attribute: ${byAttribute}`);
-        this.sentMailboxName = byAttribute;
-        return byAttribute;
+    if (this.sentMailboxName !== undefined) {
+      try {
+        await this.imap.openBox(this.sentMailboxName, true);
+        return this.sentMailboxName;
+      } catch (error) {
+        console.error(
+          `[IMAP] Cached sent mailbox is no longer selectable: ${this.sentMailboxName}`,
+          error instanceof Error ? error.message : String(error),
+        );
+        this.sentMailboxName = undefined;
       }
-    } catch (error) {
-      console.error('[IMAP] getBoxes failed during sent mailbox detection:', error instanceof Error ? error.message : String(error));
     }
 
-    for (const name of COMMON_SENT_MAILBOX_NAMES) {
+    const candidates = await this.getSentMailboxCandidates(false);
+    for (const name of candidates) {
       try {
         await this.imap.openBox(name, true);
-        console.error(`[IMAP] Sent mailbox found by name fallback: ${name}`);
+        console.error(`[IMAP] Selectable sent mailbox found: ${name}`);
         this.sentMailboxName = name;
         return name;
-      } catch {
-        // Try the next conventional mailbox name.
+      } catch (error) {
+        console.error(
+          `[IMAP] Sent mailbox candidate is not selectable: ${name}`,
+          error instanceof Error ? error.message : String(error),
+        );
       }
     }
 
     console.error('[IMAP] No sent mailbox found');
-    this.sentMailboxName = null;
     return null;
+  }
+
+  async getSentMailboxCandidates(includeCached = true): Promise<string[]> {
+    const candidates: string[] =
+      includeCached && this.sentMailboxName ? [this.sentMailboxName] : [];
+    try {
+      const boxes = await this.imap.getBoxes();
+      candidates.push(...this.findMailboxesBySentAttribute(boxes));
+    } catch (error) {
+      console.error(
+        '[IMAP] getBoxes failed during sent mailbox detection:',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    candidates.push(...COMMON_SENT_MAILBOX_NAMES);
+
+    const seen = new Set<string>();
+    return candidates.filter(candidate => {
+      const key = candidate.toUpperCase() === 'INBOX' ? 'INBOX' : candidate;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  rememberSentMailbox(mailbox: string): void {
+    this.sentMailboxName = mailbox;
+  }
+
+  invalidateSentMailbox(mailbox?: string): void {
+    if (!mailbox || this.sentMailboxName === mailbox) {
+      this.sentMailboxName = undefined;
+    }
   }
 
   getStatus(): object {
@@ -136,8 +171,12 @@ export class MailConnectionManager {
           username: EMAIL_CONFIG.IMAP.username,
           tls: EMAIL_CONFIG.IMAP.tls,
           status: imapConnected
-            ? currentBox ? `Connected - Current mailbox: ${currentBox}` : 'Connected - No mailbox open'
-            : this.imapClient ? 'Connection lost or failed' : 'Not connected',
+            ? currentBox
+              ? `Connected - Current mailbox: ${currentBox}`
+              : 'Connected - No mailbox open'
+            : this.imapClient
+              ? 'Connection lost or failed'
+              : 'Not connected',
         },
         smtp: {
           connected: smtpConnected,
@@ -146,7 +185,9 @@ export class MailConnectionManager {
           secure: EMAIL_CONFIG.SMTP.secure,
           status: smtpConnected
             ? 'Configured and verified'
-            : this.smtpClient ? 'Connection lost or failed' : 'Not connected',
+            : this.smtpClient
+              ? 'Connection lost or failed'
+              : 'Not connected',
         },
       },
     };
@@ -168,13 +209,16 @@ export class MailConnectionManager {
         results.push('✅ IMAP: Connected successfully');
       }
     } catch (error) {
-      results.push(`❌ IMAP: Connection failed - ${error instanceof Error ? error.message : String(error)}`);
+      results.push(
+        `❌ IMAP: Connection failed - ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     try {
       if (this.smtpClient?.isConnected()) {
         if (this.smtpClient.getCurrentUsername() === EMAIL_CONFIG.SMTP.username) {
-          results.push('ℹ️ SMTP: Already connected');
+          await this.smtpClient.verifyConnection();
+          results.push('✅ SMTP: Connection verified successfully');
         } else {
           await this.disconnectSMTP();
           await this.ensureSMTP();
@@ -185,7 +229,9 @@ export class MailConnectionManager {
         results.push('✅ SMTP: Connected successfully');
       }
     } catch (error) {
-      results.push(`❌ SMTP: Connection failed - ${error instanceof Error ? error.message : String(error)}`);
+      results.push(
+        `❌ SMTP: Connection failed - ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
     return results;
   }
@@ -197,7 +243,9 @@ export class MailConnectionManager {
         await this.disconnectIMAP();
         results.push('✅ IMAP: Disconnected successfully');
       } catch (error) {
-        results.push(`❌ IMAP: Disconnect failed - ${error instanceof Error ? error.message : String(error)}`);
+        results.push(
+          `❌ IMAP: Disconnect failed - ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     } else {
       results.push('ℹ️ IMAP: Not connected');
@@ -208,7 +256,9 @@ export class MailConnectionManager {
         await this.disconnectSMTP();
         results.push('✅ SMTP: Disconnected successfully');
       } catch (error) {
-        results.push(`❌ SMTP: Disconnect failed - ${error instanceof Error ? error.message : String(error)}`);
+        results.push(
+          `❌ SMTP: Disconnect failed - ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     } else {
       results.push('ℹ️ SMTP: Not connected');
@@ -229,19 +279,29 @@ export class MailConnectionManager {
     if (client) await client.disconnect();
   }
 
-  private findMailboxBySentAttribute(nodes: any, prefix = ''): string | null {
+  private findMailboxesBySentAttribute(nodes: any, prefix = '', results: string[] = []): string[] {
     for (const [name, box] of Object.entries(nodes) as [string, any][]) {
       const fullPath = prefix ? `${prefix}${box.delimiter || '.'}${name}` : name;
-      if (Array.isArray(box.attribs) && box.attribs.includes('\\Sent')) return fullPath;
+      if (
+        Array.isArray(box.attribs) &&
+        !box.attribs.some(
+          (attribute: unknown) => String(attribute).toLowerCase() === '\\noselect',
+        ) &&
+        box.attribs.some((attribute: unknown) => String(attribute).toLowerCase() === '\\sent')
+      ) {
+        results.push(fullPath);
+      }
       if (box.children) {
-        const found = this.findMailboxBySentAttribute(box.children, fullPath);
-        if (found) return found;
+        this.findMailboxesBySentAttribute(box.children, fullPath, results);
       }
     }
-    return null;
+    return results;
   }
 
-  private async waitForInitialization(protocol: string, isInitializing: () => boolean): Promise<void> {
+  private async waitForInitialization(
+    protocol: string,
+    isInitializing: () => boolean,
+  ): Promise<void> {
     const deadline = Date.now() + 30_000;
     while (isInitializing()) {
       if (Date.now() > deadline) throw new Error(`${protocol} connection initialization timed out`);

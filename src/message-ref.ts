@@ -24,7 +24,10 @@ export function parseMessageRef(value: unknown, uidField: string = 'uid'): Messa
   if (!Number.isInteger(uid) || (uid as number) <= 0) {
     throw new Error(`${uidField} must be a positive integer`);
   }
-  if (uidValidity !== undefined && (!Number.isInteger(uidValidity) || (uidValidity as number) <= 0)) {
+  if (
+    uidValidity !== undefined &&
+    (!Number.isInteger(uidValidity) || (uidValidity as number) <= 0)
+  ) {
     throw new Error('uidValidity must be a positive integer when provided');
   }
 
@@ -44,7 +47,8 @@ export function parseMoveMessageRef(value: unknown): MoveMessageRef {
     throw new Error('targetMailbox must be a non-empty string');
   }
 
-  const bothInbox = ref.mailbox.toUpperCase() === 'INBOX' && targetMailbox.toUpperCase() === 'INBOX';
+  const bothInbox =
+    ref.mailbox.toUpperCase() === 'INBOX' && targetMailbox.toUpperCase() === 'INBOX';
   if (ref.mailbox === targetMailbox || bothInbox) {
     throw new Error('targetMailbox must be different from the source mailbox');
   }
