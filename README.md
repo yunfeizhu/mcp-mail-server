@@ -258,7 +258,7 @@ Configuration file names and schemas are client-specific; do not assume every cl
 
 Natural-language example for a recurring report:
 
-> Continue the "Development Daily Report" thread that I sent to `manager@example.com` today. Do not start a new thread. Add: "Completed the mail reply fix today; plan to finish the 2.0.0 release checks tomorrow." Keep the complete previous message content and reply to all recipients.
+> Continue the "Development Daily Report" thread that I sent to `manager@example.com` today. Do not start a new thread. Add: "Completed the mail reply fix today; plan to finish regression testing tomorrow." Keep the complete previous message content and reply to all recipients.
 
 Include "continue/reply to the previous message", the exact subject, a recipient or date, and the new body to help the client select `continue_email_thread` instead of starting a new thread with `send_email`.
 
@@ -425,6 +425,15 @@ The MCP server and the version-pinned Inspector both require Node.js 22.13 or ne
 ## Release notes
 
 <details open>
+<summary><strong>v2.0.1</strong> — restore Sent-folder saves on current Node.js releases</summary>
+
+**Fixed**
+
+- Restore IMAP APPEND on Node.js 23 and newer by letting the mail server assign `INTERNALDATE`, avoiding the removed `util.isDate` API in `imap@0.8.19`.
+
+</details>
+
+<details>
 <summary><strong>v2.0.0</strong> — smaller tool surface and safer mail operations</summary>
 
 **Breaking changes**

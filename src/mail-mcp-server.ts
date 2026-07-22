@@ -64,7 +64,7 @@ export class MailMCPServer {
     });
     this.server = new McpServer({
       name: 'mcp-mail',
-      version: '2.0.0',
+      version: '2.0.1',
     });
 
     this.setupToolHandlers();

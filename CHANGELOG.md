@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.1] - 2026-07-22
+
+### Fixed
+
+- Restore Sent-folder APPEND compatibility on Node.js 23 and newer by letting the IMAP server assign `INTERNALDATE`, avoiding the removed `util.isDate` API in `imap@0.8.19`
+
 ## [2.0.0] - 2026-07-21
 
 ### Breaking Changes

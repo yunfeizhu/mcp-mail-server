@@ -654,7 +654,7 @@ test('IMAPClient enforces a shared byte budget while body streams are buffered',
   assert.equal(byteBudget.used, 10);
 });
 
-test('IMAPClient appends sent messages as seen with an internal date', async () => {
+test('IMAPClient appends sent messages without legacy node-imap date validation', async () => {
   const client = new IMAPClient({
     host: 'imap.example.com',
     port: 993,
@@ -663,6 +663,7 @@ test('IMAPClient appends sent messages as seen with an internal date', async () 
   });
   client.connected = true;
   let openedReadWrite = false;
+  let appendOptions: any;
   client.openBox = async (mailbox, readOnly) => {
     assert.equal(mailbox, 'INBOX.Sent');
     assert.equal(readOnly, false);
@@ -671,16 +672,28 @@ test('IMAPClient appends sent messages as seen with an internal date', async () 
   };
   client.imap = {
     append(content, options, callback) {
+      appendOptions = options;
       assert.equal(openedReadWrite, true);
       assert.equal(content.toString(), 'raw-message');
       assert.equal(options.mailbox, 'INBOX.Sent');
       assert.deepEqual(options.flags, ['\\Seen']);
-      assert.ok(options.date instanceof Date);
+      assert.equal('date' in options, false);
       callback(null);
     },
   };
 
   await client.saveMessageToFolder(Buffer.from('raw-message'), 'INBOX.Sent');
+
+  // Exercise the real dependency path as a Node.js 23+ regression check.
+  // imap@0.8.19 throws `isDate is not a function` here when date is present.
+  const dependencyClient = new TestImap({
+    user: 'sender@example.com',
+    password: 'not-used',
+    host: 'imap.example.com',
+  });
+  assert.doesNotThrow(() => {
+    dependencyClient.append(Buffer.from('raw-message'), appendOptions, () => undefined);
+  });
 });
 
 test('IMAPClient classifies a connection loss during APPEND as unknown', async () => {

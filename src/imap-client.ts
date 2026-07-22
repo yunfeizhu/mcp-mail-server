@@ -1213,7 +1213,9 @@ export class IMAPClient extends EventEmitter {
           {
             mailbox: folderName,
             flags: ['\\Seen'],
-            date: new Date(),
+            // Let the IMAP server assign INTERNALDATE. imap@0.8.19 validates
+            // this optional field with util.isDate, which was removed in
+            // Node.js 23 and breaks APPEND on newer runtimes.
           },
           err => {
             if (err) {

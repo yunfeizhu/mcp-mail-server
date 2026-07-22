@@ -258,7 +258,7 @@ env_vars = [
 
 周期报告的自然语言调用示例：
 
-> 请继续回复我今天发给 `manager@example.com` 的《研发日报》，不要新建邮件线程。新增内容："今日完成邮件回复功能修复；明日计划完成 2.0.0 发版检查。"请保留之前的完整邮件内容，并回复所有人。
+> 请继续回复我今天发给 `manager@example.com` 的《研发日报》，不要新建邮件线程。新增内容："今日完成邮件回复功能修复；明日计划完成回归验证。"请保留之前的完整邮件内容，并回复所有人。
 
 建议明确提供“继续回复上一封”、准确主题、收件人或日期以及本次新增正文，帮助客户端选择 `continue_email_thread`，避免误用 `send_email` 新建线程。
 
@@ -425,6 +425,15 @@ MCP 服务和固定版本的 Inspector 均需要 Node.js 22.13 或更高版本�
 ## 版本说明
 
 <details open>
+<summary><strong>v2.0.1</strong> — 恢复新版 Node.js 的已发送目录保存</summary>
+
+**修复**
+
+- 由邮件服务器分配 `INTERNALDATE`，避开 `imap@0.8.19` 对已移除 `util.isDate` API 的调用，恢复 Node.js 23 及更高版本的 IMAP APPEND。
+
+</details>
+
+<details>
 <summary><strong>v2.0.0</strong> — 更精简的工具面和更安全的邮件操作</summary>
 
 **破坏性变更**
