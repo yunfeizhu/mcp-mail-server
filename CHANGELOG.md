@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.2] - 2026-08-19
+
+### Fixed
+
+- Fetch complete RFC822 messages as a single IMAP body stream instead of concatenating separately returned `HEADER` and `TEXT` sections, restoring message headers, Message-ID, attachment metadata, and attachment downloads when providers such as Gmail return sections out of request order
+
 ## [2.0.1] - 2026-07-22
 
 ### Fixed

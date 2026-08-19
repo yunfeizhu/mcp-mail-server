@@ -329,9 +329,12 @@ export class IMAPClient extends EventEmitter {
       await this.openBox('INBOX', true);
     }
 
-    const { byteBudget, ...imapFetchOverrides } = options;
+    const { byteBudget, bodies, ...imapFetchOverrides } = options;
     const fetchOptions: Imap.FetchOptions = {
-      bodies: options.bodies || ['HEADER', 'TEXT'],
+      // Fetch a complete RFC822 message as one body stream by default. IMAP
+      // servers may return separately requested HEADER and TEXT sections in
+      // either order, so concatenating those streams can produce invalid MIME.
+      bodies: bodies ?? '',
       // The parsed message is built from BODY data, so ENVELOPE and
       // BODYSTRUCTURE are redundant. Keeping them disabled also ensures all
       // variable-sized message data passes through the bounded body streams.
@@ -571,7 +574,9 @@ export class IMAPClient extends EventEmitter {
       let tooLarge = false;
 
       const fetch = imap.fetch([uid], {
-        bodies: ['HEADER', 'TEXT'],
+        // A single complete-message stream preserves the MIME header/body
+        // ordering and includes every attachment part.
+        bodies: '',
         struct: false,
         envelope: false,
         size: true,

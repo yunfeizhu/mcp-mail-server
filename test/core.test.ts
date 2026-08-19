@@ -51,6 +51,33 @@ const SMTPClient = TypedSMTPClient as any;
 const TestEventEmitter = EventEmitter as any;
 const TestImap = Imap as any;
 
+function createMultipartMessageFixture(): Buffer {
+  return Buffer.from(
+    [
+      'From: Applicant <applicant@example.com>',
+      'To: Hiring <hiring@example.com>',
+      'Subject: Application for Marketing Specialist',
+      'Message-ID: <gmail-message@example.com>',
+      'MIME-Version: 1.0',
+      'Content-Type: multipart/mixed; boundary="gmail-boundary"',
+      '',
+      '--gmail-boundary',
+      'Content-Type: text/plain; charset=utf-8',
+      'Content-Transfer-Encoding: 7bit',
+      '',
+      'Application body',
+      '--gmail-boundary',
+      'Content-Type: application/pdf; name="resume.pdf"',
+      'Content-Disposition: attachment; filename="resume.pdf"',
+      'Content-Transfer-Encoding: base64',
+      '',
+      'YXR0YWNobWVudC1jb250ZW50',
+      '--gmail-boundary--',
+      '',
+    ].join('\r\n'),
+  );
+}
+
 let mailRuntimePromise: Promise<any> | undefined;
 function loadMailRuntime(): Promise<any> {
   if (!mailRuntimePromise) {
@@ -522,6 +549,62 @@ test('IMAPClient requests RFC822 size by default', async () => {
   assert.equal(fetchOptions.struct, false);
 });
 
+test('IMAPClient fetches and parses a complete MIME message as one body stream', async () => {
+  const client = new IMAPClient({
+    host: 'imap.example.com',
+    port: 993,
+    username: 'sender@example.com',
+    password: 'not-used',
+  });
+  let fetchOptions;
+  const rawMessage = createMultipartMessageFixture();
+  client.currentBox = 'INBOX';
+  client.currentUidValidity = 7;
+  client.imap = {
+    fetch(_uids, options) {
+      fetchOptions = options;
+      const fetch = new TestEventEmitter();
+      queueMicrotask(() => {
+        const message = new TestEventEmitter();
+        const stream = new TestEventEmitter();
+        fetch.emit('message', message, 1);
+        message.emit('body', stream, { which: '' });
+        stream.emit('data', rawMessage);
+        stream.emit('end');
+        message.emit('attributes', {
+          uid: 42,
+          flags: [],
+          date: new Date('2026-08-18T06:02:45.000Z'),
+          size: rawMessage.length,
+        });
+        message.emit('end');
+        fetch.emit('end');
+      });
+      return fetch;
+    },
+  };
+
+  const [message] = await client.fetchMessages([42]);
+
+  assert.equal(fetchOptions.bodies, '');
+  assert.equal(fetchOptions.markSeen, false);
+  assert.equal(message.subject, 'Application for Marketing Specialist');
+  assert.equal(message.from, 'applicant@example.com');
+  assert.equal(message.to, 'hiring@example.com');
+  assert.equal(message.messageId, '<gmail-message@example.com>');
+  assert.equal(message.text?.trim(), 'Application body');
+  assert.deepEqual(message.attachments, [
+    {
+      index: 0,
+      filename: 'resume.pdf',
+      contentType: 'application/pdf',
+      size: Buffer.byteLength('attachment-content'),
+      contentId: undefined,
+      contentDisposition: 'attachment',
+    },
+  ]);
+});
+
 test('IMAPClient reports an unavailable RFC822 size as null instead of zero', async () => {
   const client = new IMAPClient({
     host: 'imap.example.com',
@@ -751,6 +834,44 @@ test('IMAPClient bounds attachment MIME buffering even when RFC822 size is unava
     () => client.fetchMessageAttachments(42, 4),
     /attachment processing limit of 4 bytes/,
   );
+});
+
+test('IMAPClient extracts attachments from a complete MIME message body', async () => {
+  const client = new IMAPClient({
+    host: 'imap.example.com',
+    port: 993,
+    username: 'sender@example.com',
+    password: 'not-used',
+  });
+  let fetchOptions;
+  const rawMessage = createMultipartMessageFixture();
+  client.currentBox = 'INBOX';
+  client.imap = {
+    fetch(_uids, options) {
+      fetchOptions = options;
+      const fetch = new TestEventEmitter();
+      queueMicrotask(() => {
+        const message = new TestEventEmitter();
+        const stream = new TestEventEmitter();
+        fetch.emit('message', message);
+        message.emit('body', stream, { which: '' });
+        stream.emit('data', rawMessage.subarray(0, 100));
+        stream.emit('data', rawMessage.subarray(100));
+        stream.emit('end');
+        fetch.emit('end');
+      });
+      return fetch;
+    },
+  };
+
+  const attachments = await client.fetchMessageAttachments(42);
+
+  assert.equal(fetchOptions.bodies, '');
+  assert.equal(fetchOptions.markSeen, false);
+  assert.equal(attachments.length, 1);
+  assert.equal(attachments[0].filename, 'resume.pdf');
+  assert.equal(attachments[0].contentType, 'application/pdf');
+  assert.equal(attachments[0].content.toString(), 'attachment-content');
 });
 
 test('IMAPClient permanently deletes only the selected UID', async () => {

@@ -425,6 +425,15 @@ MCP 服务和固定版本的 Inspector 均需要 Node.js 22.13 或更高版本�
 ## 版本说明
 
 <details open>
+<summary><strong>v2.0.2</strong> — 修复完整邮件与附件解析</summary>
+
+**修复**
+
+- 将完整 RFC822 邮件作为单个 IMAP body stream 获取，避免 Gmail 等服务调整独立邮件头与正文分段的返回顺序，恢复邮件头、Message-ID、附件元数据与附件下载。
+
+</details>
+
+<details>
 <summary><strong>v2.0.1</strong> — 恢复新版 Node.js 的已发送目录保存</summary>
 
 **修复**
@@ -478,9 +487,9 @@ MCP 服务和固定版本的 Inspector 均需要 Node.js 22.13 或更高版本�
 
 <a href="https://www.star-history.com/?repos=yunfeizhu%2Fmcp-mail-server&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=yunfeizhu/mcp-mail-server&type=date&theme=dark&legend=top-left&sealed_token=Ze9zRI-2rTn5UP1tuexFjipRjyRf15GeYGGbLIirGDjXKtgU7m7WcJgkHhTDsQ3lpL7nfGX0HjGrL_oF458CUojS16HdhDGiMUiKGR_iMX5-Os_clOYOcTBCjhW3qo7pGX8Av0Id8CaBBhXSfTE3Q_qL3sgnbBfAcFy6fGVYVSja7RnY_4C7mz5L25iA" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=yunfeizhu/mcp-mail-server&type=date&legend=top-left&sealed_token=Ze9zRI-2rTn5UP1tuexFjipRjyRf15GeYGGbLIirGDjXKtgU7m7WcJgkHhTDsQ3lpL7nfGX0HjGrL_oF458CUojS16HdhDGiMUiKGR_iMX5-Os_clOYOcTBCjhW3qo7pGX8Av0Id8CaBBhXSfTE3Q_qL3sgnbBfAcFy6fGVYVSja7RnY_4C7mz5L25iA" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=yunfeizhu/mcp-mail-server&type=date&legend=top-left&sealed_token=Ze9zRI-2rTn5UP1tuexFjipRjyRf15GeYGGbLIirGDjXKtgU7m7WcJgkHhTDsQ3lpL7nfGX0HjGrL_oF458CUojS16HdhDGiMUiKGR_iMX5-Os_clOYOcTBCjhW3qo7pGX8Av0Id8CaBBhXSfTE3Q_qL3sgnbBfAcFy6fGVYVSja7RnY_4C7mz5L25iA" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=yunfeizhu/mcp-mail-server&type=date&theme=dark&legend=top-left&sealed_token=D25BFoz0nGKX7s4KmXe3x8mPcUiHq4HcwGCJr8LRZ1bOh3O9kYp1Ghc9B3bangB64vdDMw2eKlYH0ZLHl-R6suQD-c8A9G_FlEgziC3ANIGhsyXsv2w74pHl7LvDH0ZNji88Td7y8rf38gK4XEw7Faog6Rs82mrxQGJjvD10bWiuOECL4gUazenKKGVc" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=yunfeizhu/mcp-mail-server&type=date&legend=top-left&sealed_token=D25BFoz0nGKX7s4KmXe3x8mPcUiHq4HcwGCJr8LRZ1bOh3O9kYp1Ghc9B3bangB64vdDMw2eKlYH0ZLHl-R6suQD-c8A9G_FlEgziC3ANIGhsyXsv2w74pHl7LvDH0ZNji88Td7y8rf38gK4XEw7Faog6Rs82mrxQGJjvD10bWiuOECL4gUazenKKGVc" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=yunfeizhu/mcp-mail-server&type=date&legend=top-left&sealed_token=D25BFoz0nGKX7s4KmXe3x8mPcUiHq4HcwGCJr8LRZ1bOh3O9kYp1Ghc9B3bangB64vdDMw2eKlYH0ZLHl-R6suQD-c8A9G_FlEgziC3ANIGhsyXsv2w74pHl7LvDH0ZNji88Td7y8rf38gK4XEw7Faog6Rs82mrxQGJjvD10bWiuOECL4gUazenKKGVc" />
  </picture>
 </a>
 

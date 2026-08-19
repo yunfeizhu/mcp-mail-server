@@ -425,6 +425,15 @@ The MCP server and the version-pinned Inspector both require Node.js 22.13 or ne
 ## Release notes
 
 <details open>
+<summary><strong>v2.0.2</strong> — restore complete message and attachment parsing</summary>
+
+**Fixed**
+
+- Fetch each complete RFC822 message as one IMAP body stream so providers such as Gmail cannot reorder separately requested header and text sections, restoring headers, Message-ID, attachment metadata, and attachment downloads.
+
+</details>
+
+<details>
 <summary><strong>v2.0.1</strong> — restore Sent-folder saves on current Node.js releases</summary>
 
 **Fixed**
@@ -478,9 +487,9 @@ See [CHANGELOG.md](CHANGELOG.md) for the complete version history.
 
 <a href="https://www.star-history.com/?repos=yunfeizhu%2Fmcp-mail-server&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=yunfeizhu/mcp-mail-server&type=date&theme=dark&legend=top-left&sealed_token=Ze9zRI-2rTn5UP1tuexFjipRjyRf15GeYGGbLIirGDjXKtgU7m7WcJgkHhTDsQ3lpL7nfGX0HjGrL_oF458CUojS16HdhDGiMUiKGR_iMX5-Os_clOYOcTBCjhW3qo7pGX8Av0Id8CaBBhXSfTE3Q_qL3sgnbBfAcFy6fGVYVSja7RnY_4C7mz5L25iA" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=yunfeizhu/mcp-mail-server&type=date&legend=top-left&sealed_token=Ze9zRI-2rTn5UP1tuexFjipRjyRf15GeYGGbLIirGDjXKtgU7m7WcJgkHhTDsQ3lpL7nfGX0HjGrL_oF458CUojS16HdhDGiMUiKGR_iMX5-Os_clOYOcTBCjhW3qo7pGX8Av0Id8CaBBhXSfTE3Q_qL3sgnbBfAcFy6fGVYVSja7RnY_4C7mz5L25iA" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=yunfeizhu/mcp-mail-server&type=date&legend=top-left&sealed_token=Ze9zRI-2rTn5UP1tuexFjipRjyRf15GeYGGbLIirGDjXKtgU7m7WcJgkHhTDsQ3lpL7nfGX0HjGrL_oF458CUojS16HdhDGiMUiKGR_iMX5-Os_clOYOcTBCjhW3qo7pGX8Av0Id8CaBBhXSfTE3Q_qL3sgnbBfAcFy6fGVYVSja7RnY_4C7mz5L25iA" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=yunfeizhu/mcp-mail-server&type=date&theme=dark&legend=top-left&sealed_token=D25BFoz0nGKX7s4KmXe3x8mPcUiHq4HcwGCJr8LRZ1bOh3O9kYp1Ghc9B3bangB64vdDMw2eKlYH0ZLHl-R6suQD-c8A9G_FlEgziC3ANIGhsyXsv2w74pHl7LvDH0ZNji88Td7y8rf38gK4XEw7Faog6Rs82mrxQGJjvD10bWiuOECL4gUazenKKGVc" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=yunfeizhu/mcp-mail-server&type=date&legend=top-left&sealed_token=D25BFoz0nGKX7s4KmXe3x8mPcUiHq4HcwGCJr8LRZ1bOh3O9kYp1Ghc9B3bangB64vdDMw2eKlYH0ZLHl-R6suQD-c8A9G_FlEgziC3ANIGhsyXsv2w74pHl7LvDH0ZNji88Td7y8rf38gK4XEw7Faog6Rs82mrxQGJjvD10bWiuOECL4gUazenKKGVc" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=yunfeizhu/mcp-mail-server&type=date&legend=top-left&sealed_token=D25BFoz0nGKX7s4KmXe3x8mPcUiHq4HcwGCJr8LRZ1bOh3O9kYp1Ghc9B3bangB64vdDMw2eKlYH0ZLHl-R6suQD-c8A9G_FlEgziC3ANIGhsyXsv2w74pHl7LvDH0ZNji88Td7y8rf38gK4XEw7Faog6Rs82mrxQGJjvD10bWiuOECL4gUazenKKGVc" />
  </picture>
 </a>
 
