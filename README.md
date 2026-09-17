@@ -52,7 +52,7 @@ Search, read, organize, reply to, and send email through supported password- or 
 2. **Add** the server to your MCP client using one of the configurations below.
 3. **Restart or reconnect** the client, then ask: _“Show me unread emails from today.”_
 
-All examples use `npx -y mcp-mail-server`, so there is nothing to install globally.
+Install **Node.js 22.13.0 or newer** before configuring your MCP client. All examples use `npx -y mcp-mail-server`, so there is no need to install the server globally.
 
 ## Client setup
 
