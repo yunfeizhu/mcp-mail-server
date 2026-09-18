@@ -1212,9 +1212,11 @@ test('tool input schemas are enforced by Zod registrations', () => {
   const replyTool = MAIL_TOOLS.find(tool => tool.name === 'reply_to_email');
   const sendTool = MAIL_TOOLS.find(tool => tool.name === 'send_email');
   const continueTool = MAIL_TOOLS.find(tool => tool.name === 'continue_email_thread');
+  const saveAttachmentTool = MAIL_TOOLS.find(tool => tool.name === 'save_attachment');
   assert.ok(replyTool);
   assert.ok(sendTool);
   assert.ok(continueTool);
+  assert.ok(saveAttachmentTool);
 
   const invalidBoolean = replyTool.inputSchema.safeParse({
     mailbox: 'INBOX',
@@ -1258,6 +1260,32 @@ test('tool input schemas are enforced by Zod registrations', () => {
   });
   assert.equal(oversizedMailbox.success, false);
   assert.equal(oversizedMailbox.error.issues[0].path.join('.'), 'mailbox');
+
+  const conflictingAttachmentSelectors = saveAttachmentTool.inputSchema.safeParse({
+    mailbox: 'INBOX',
+    uid: 1,
+    savePath: '/tmp',
+    attachmentIndex: 0,
+    attachmentFilename: 'report.pdf',
+  });
+  assert.equal(conflictingAttachmentSelectors.success, false);
+  assert.equal(conflictingAttachmentSelectors.error.issues[0].path.join('.'), 'attachmentFilename');
+
+  assert.deepEqual(
+    saveAttachmentTool.inputSchema.parse({
+      mailbox: 'INBOX',
+      uid: 1,
+      savePath: '/tmp',
+      attachmentFilename: 'report.pdf',
+    }),
+    {
+      mailbox: 'INBOX',
+      uid: 1,
+      savePath: '/tmp',
+      attachmentFilename: 'report.pdf',
+      returnBase64: false,
+    },
+  );
 
   assert.deepEqual(
     replyTool.inputSchema.parse({
@@ -1758,6 +1786,78 @@ test('MailMCPServer reports attachment files saved before a later write failure'
   assert.equal(result.savedFiles[0].savedPath, '/allowed/first.txt');
   assert.equal(result.failedAttachment.index, 1);
   assert.match(result.note, /avoid duplicate files/);
+  await server.server.close();
+});
+
+test('MailMCPServer selects one attachment by exact filename', async () => {
+  const [, { MailMCPServer }] = await loadMailRuntime();
+  const server = new MailMCPServer({ registerProcessHandlers: false });
+  let attachments = [
+    {
+      index: 0,
+      filename: 'first.txt',
+      contentType: 'text/plain',
+      size: 5,
+      content: Buffer.from('first'),
+    },
+    {
+      index: 1,
+      filename: 'second.txt',
+      contentType: 'text/plain',
+      size: 6,
+      content: Buffer.from('second'),
+    },
+  ];
+  server.connections = {
+    ensure: async () => {},
+    imap: {
+      async fetchMessageAttachments() {
+        return attachments;
+      },
+    },
+  };
+  server.getMessageByRef = async () => ({
+    uid: 42,
+    sourceMailbox: 'INBOX',
+    uidValidity: 7,
+    flags: [],
+    date: '2026-09-18T00:00:00.000Z',
+    size: 100,
+    subject: 'Attachments',
+    from: 'sender@example.com',
+    to: 'recipient@example.com',
+  });
+  const writes: string[] = [];
+  server.fileAccessPolicy = {
+    async writeNewFile(_directory, filename) {
+      writes.push(filename);
+      return `/allowed/${filename}`;
+    },
+  };
+
+  const response = await server.handleSaveAttachment({
+    mailbox: 'INBOX',
+    uid: 42,
+    savePath: '/allowed',
+    attachmentFilename: 'second.txt',
+  });
+  const result = JSON.parse(response.content[0].text);
+  assert.deepEqual(writes, ['second.txt']);
+  assert.equal(result.totalAttachments, 2);
+  assert.equal(result.savedCount, 1);
+  assert.equal(result.savedFiles[0].index, 1);
+
+  attachments = [attachments[0], { ...attachments[1], filename: 'first.txt' }];
+  await assert.rejects(
+    () =>
+      server.handleSaveAttachment({
+        mailbox: 'INBOX',
+        uid: 42,
+        savePath: '/allowed',
+        attachmentFilename: 'first.txt',
+      }),
+    /Multiple attachments are named "first\.txt"; use attachmentIndex/,
+  );
   await server.server.close();
 });
 

@@ -273,7 +273,7 @@ SMTP 接受邮件后，发送工具会返回 `sentFolderSaved` 和自动识别�
 ### 附件操作
 
 - **get_message** 会随邮件返回附件文件名、类型、大小和索引
-- **save_attachment**: `mailbox` (字符串), `uid` (数字), `uidValidity` (数字, 可选), `savePath` (字符串, 绝对路径), `attachmentIndex` (数字, 可选, 从0开始), `returnBase64` (布尔值, 可选, 默认: false)。批量保存时若后续写入失败，会返回 `isError: true`、`partial`、`savedFiles` 和 `failedAttachment`，避免重试时静默生成重复文件。
+- **save_attachment**: `mailbox` (字符串), `uid` (数字), `uidValidity` (数字, 可选), `savePath` (字符串, 绝对路径), `attachmentIndex` (数字, 可选, 从0开始), `attachmentFilename` (字符串, 可选, 精确匹配), `returnBase64` (布尔值, 可选, 默认: false)。索引和文件名只能选择一种；同名附件必须使用索引。两者都省略时保存全部附件。批量保存时若后续写入失败，会返回 `isError: true`、`partial`、`savedFiles` 和 `failedAttachment`，避免重试时静默生成重复文件。
 
 </details>
 

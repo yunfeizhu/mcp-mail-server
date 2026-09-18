@@ -273,7 +273,7 @@ After SMTP accepts a message, sending tools report `sentFolderSaved` and the det
 ### Attachment Operations
 
 - **get_message** returns attachment filename, content type, size, and index with the message
-- **save_attachment**: `mailbox` (string), `uid` (number), `uidValidity` (number, optional), `savePath` (string, absolute path), `attachmentIndex` (number, optional, 0-based), `returnBase64` (boolean, optional, default: false). When saving multiple attachments, a later write failure returns `isError: true`, `partial`, `savedFiles`, and `failedAttachment` so a retry does not silently duplicate files.
+- **save_attachment**: `mailbox` (string), `uid` (number), `uidValidity` (number, optional), `savePath` (string, absolute path), `attachmentIndex` (number, optional, 0-based), `attachmentFilename` (string, optional, exact match), `returnBase64` (boolean, optional, default: false). Select by index or filename, not both; duplicate filenames must be selected by index. Omit both selectors to save all attachments. When saving multiple attachments, a later write failure returns `isError: true`, `partial`, `savedFiles`, and `failedAttachment` so a retry does not silently duplicate files.
 
 </details>
 
