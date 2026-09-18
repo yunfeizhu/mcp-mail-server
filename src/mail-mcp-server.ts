@@ -492,6 +492,7 @@ export class MailMCPServer {
     const ref = parseMessageRef(args);
     const savePath = args.savePath;
     const attachmentIndex = args.attachmentIndex;
+    const attachmentFilename = args.attachmentFilename;
     const returnBase64 = args.returnBase64 || false;
 
     if (typeof savePath !== 'string' || !savePath) {
@@ -499,6 +500,15 @@ export class MailMCPServer {
     }
     if (!path.isAbsolute(savePath)) {
       throw new Error('savePath must be an absolute path');
+    }
+    if (attachmentIndex !== undefined && attachmentFilename !== undefined) {
+      throw new Error('attachmentIndex and attachmentFilename are mutually exclusive');
+    }
+    if (
+      attachmentFilename !== undefined &&
+      (typeof attachmentFilename !== 'string' || attachmentFilename.length === 0)
+    ) {
+      throw new Error('attachmentFilename must be a non-empty string');
     }
     await this.connections.ensure(true, false);
 
@@ -548,6 +558,19 @@ export class MailMCPServer {
           );
         }
         attachmentsToSave = [allAttachments[attachmentIndex]];
+      } else if (attachmentFilename !== undefined) {
+        const matchingAttachments = allAttachments.filter(
+          attachment => attachment.filename === attachmentFilename,
+        );
+        if (matchingAttachments.length === 0) {
+          throw new Error(`Attachment filename not found: ${JSON.stringify(attachmentFilename)}`);
+        }
+        if (matchingAttachments.length > 1) {
+          throw new Error(
+            `Multiple attachments are named ${JSON.stringify(attachmentFilename)}; use attachmentIndex to select one`,
+          );
+        }
+        attachmentsToSave = matchingAttachments;
       } else {
         attachmentsToSave = allAttachments;
       }

@@ -132,6 +132,7 @@ test('stdio server initializes and exposes mailbox-scoped message tools', async 
     const sendEmail = tools.find(tool => tool.name === 'send_email');
     const replyToEmail = tools.find(tool => tool.name === 'reply_to_email');
     const continueEmailThread = tools.find(tool => tool.name === 'continue_email_thread');
+    const saveAttachment = tools.find(tool => tool.name === 'save_attachment');
     assert.ok(searchMessages);
     assert.ok(getMessage);
     assert.ok(getMessages);
@@ -140,6 +141,7 @@ test('stdio server initializes and exposes mailbox-scoped message tools', async 
     assert.ok(sendEmail);
     assert.ok(replyToEmail);
     assert.ok(continueEmailThread);
+    assert.ok(saveAttachment);
     assert.deepEqual(getMessage.inputSchema.required, ['mailbox', 'uid']);
     assert.deepEqual(deleteMessage.inputSchema.required, ['mailbox', 'uid']);
     assert.deepEqual(moveMessage.inputSchema.required, ['mailbox', 'uid', 'targetMailbox']);
@@ -169,6 +171,9 @@ test('stdio server initializes and exposes mailbox-scoped message tools', async 
       { required: ['text'] },
       { required: ['html'] },
     ]);
+    assert.deepEqual(saveAttachment.inputSchema.not, {
+      required: ['attachmentIndex', 'attachmentFilename'],
+    });
 
     const invalidCall = await client.callTool({
       name: 'check_connection',

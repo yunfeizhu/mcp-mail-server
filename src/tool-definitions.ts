@@ -14,6 +14,7 @@ const MAX_SUBJECT_LENGTH = 998;
 const MAX_BODY_LENGTH = 10_000_000;
 const MAX_SEARCH_TEXT_LENGTH = 4096;
 const MAX_PATH_LENGTH = 4096;
+const MAX_ATTACHMENT_FILENAME_LENGTH = 1024;
 
 const mailboxSchema = z
   .string()
@@ -399,7 +400,7 @@ export const MAIL_TOOLS = [
   {
     name: 'save_attachment',
     description:
-      'Save one or all attachments from a mailbox-scoped message into an allowed local directory. If a later write fails, returns the files already saved as a structured partial result.',
+      'Save one or all attachments from a mailbox-scoped message into an allowed local directory. Select one attachment by zero-based index or exact filename. If a later write fails, returns the files already saved as a structured partial result.',
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -425,14 +426,32 @@ export const MAIL_TOOLS = [
           .int()
           .safe()
           .min(0)
-          .describe('Zero-based attachment index. Omit to save all attachments.')
+          .describe(
+            'Zero-based attachment index. Mutually exclusive with attachmentFilename; omit both to save all attachments.',
+          )
+          .optional(),
+        attachmentFilename: z
+          .string()
+          .min(1)
+          .max(MAX_ATTACHMENT_FILENAME_LENGTH)
+          .describe(
+            'Exact attachment filename. Mutually exclusive with attachmentIndex; duplicate filenames must be selected by index.',
+          )
           .optional(),
         returnBase64: z
           .boolean()
           .default(false)
           .describe('Also include saved content as Base64 when within the configured size limit'),
       })
-      .strict(),
+      .strict()
+      .refine(
+        value => value.attachmentIndex === undefined || value.attachmentFilename === undefined,
+        {
+          message: 'attachmentIndex and attachmentFilename are mutually exclusive',
+          path: ['attachmentFilename'],
+        },
+      )
+      .meta({ not: { required: ['attachmentIndex', 'attachmentFilename'] } }),
   },
 ] as const satisfies readonly MailToolDefinition[];
 
