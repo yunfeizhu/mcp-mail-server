@@ -94,6 +94,19 @@ export interface GetMessagesArgs {
   markSeen?: boolean;
 }
 
+export interface MoveMessagesArgs {
+  mailbox: string;
+  uidValidity?: number;
+  uids: number[];
+  targetMailbox: string;
+}
+
+export interface DeleteMessagesArgs {
+  mailbox: string;
+  uidValidity?: number;
+  uids: number[];
+}
+
 export interface SendEmailArgs {
   to: string;
   subject: string;
