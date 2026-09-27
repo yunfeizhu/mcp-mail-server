@@ -58,3 +58,28 @@ export function parseMoveMessageRef(value: unknown): MoveMessageRef {
     targetMailbox,
   };
 }
+
+export const MAX_BATCH_UIDS = 200;
+
+/**
+ * Validate a batch of UIDs for the plural move/delete tools.
+ *
+ * The zod input schema already enforces these rules for well-behaved callers;
+ * this mirrors the defensive validation `handleGetMessages` performs so the
+ * handlers stay safe when invoked with unvalidated input.
+ */
+export function parseUidBatch(value: unknown, max: number = MAX_BATCH_UIDS): number[] {
+  if (!Array.isArray(value)) {
+    throw new Error('uids must be an array of positive integers');
+  }
+  if (value.some(uid => !Number.isInteger(uid) || (uid as number) <= 0)) {
+    throw new Error('uids must be an array of positive integers');
+  }
+  if (value.length === 0 || value.length > max) {
+    throw new Error(`uids must contain between 1 and ${max} entries`);
+  }
+  if (new Set(value).size !== value.length) {
+    throw new Error('uids must not contain duplicates');
+  }
+  return value as number[];
+}

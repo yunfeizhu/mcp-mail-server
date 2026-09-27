@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- `move_messages` and `delete_messages` move or permanently delete up to 200 UIDs from one mailbox in a single call, so bulk mailbox maintenance no longer needs one tool call per message
+- Both tools move or delete each UID independently and return `requestedCount`, `failedCount`, the succeeded UID list and a per-UID `results` array preserving the existing `PartialMoveError` and `DeleteMessageError` diagnostics, because IMAP provides no atomic multi-message MOVE or EXPUNGE
+- Both batch tools reselect the explicit source mailbox read-write and verify the initial UIDVALIDITY before each UID, preventing partial-failure recovery from redirecting operations, leaving the source read-only, or reusing stale UIDs; `move_messages` refreshes the destination reference only after the batch
+
 ## [2.0.2] - 2026-08-19
 
 ### Fixed

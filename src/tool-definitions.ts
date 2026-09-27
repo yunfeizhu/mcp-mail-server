@@ -15,6 +15,7 @@ const MAX_BODY_LENGTH = 10_000_000;
 const MAX_SEARCH_TEXT_LENGTH = 4096;
 const MAX_PATH_LENGTH = 4096;
 const MAX_ATTACHMENT_FILENAME_LENGTH = 1024;
+const MAX_BATCH_UIDS = 200;
 
 const mailboxSchema = z
   .string()
@@ -29,6 +30,17 @@ const uidValiditySchema = z
   .min(1)
   .describe('Optional UIDVALIDITY returned with the message reference')
   .optional();
+
+const batchUidsSchema = (description: string) =>
+  z
+    .array(z.number().int().safe().min(1))
+    .min(1)
+    .max(MAX_BATCH_UIDS)
+    .refine(value => new Set(value).size === value.length, {
+      message: 'UIDs must not contain duplicates',
+    })
+    .meta({ uniqueItems: true })
+    .describe(description);
 
 const bodyTextSchema = z.string().min(1).max(MAX_BODY_LENGTH).describe('Plain-text body');
 
@@ -381,6 +393,29 @@ export const MAIL_TOOLS = [
       .strict(),
   },
   {
+    name: 'move_messages',
+    description:
+      'Move several mailbox-scoped messages from one mailbox into another existing mailbox in a single call. Each UID is moved independently and reported separately, so a failure on one message does not abort the rest. Returns movedCount, failedCount and a per-UID results array; inspect any entry whose moved flag is false before retrying that UID.',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    inputSchema: z
+      .object({
+        mailbox: mailboxSchema,
+        uidValidity: uidValiditySchema,
+        uids: batchUidsSchema('UIDs in the source mailbox to move'),
+        targetMailbox: z
+          .string()
+          .min(1)
+          .max(MAX_MAILBOX_LENGTH)
+          .describe('Existing destination mailbox returned by list_mailboxes'),
+      })
+      .strict(),
+  },
+  {
     name: 'delete_message',
     description:
       'Permanently delete one existing mailbox-scoped message using targeted UID EXPUNGE. Fails safely when the UID is missing or the IMAP server lacks UIDPLUS, and returns a structured unknown outcome when a transport failure prevents confirmation.',
@@ -394,6 +429,24 @@ export const MAIL_TOOLS = [
       .object({
         ...messageRefShape,
         uid: z.number().int().safe().min(1).describe('UID of the message to permanently delete'),
+      })
+      .strict(),
+  },
+  {
+    name: 'delete_messages',
+    description:
+      'Permanently delete several mailbox-scoped messages in a single call using targeted UID EXPUNGE. Each UID is deleted independently and reported separately, so a failure on one message does not abort the rest. Returns deletedCount, failedCount and a per-UID results array; inspect any entry whose deleted flag is false before retrying that UID.',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    inputSchema: z
+      .object({
+        mailbox: mailboxSchema,
+        uidValidity: uidValiditySchema,
+        uids: batchUidsSchema('UIDs of the messages to permanently delete'),
       })
       .strict(),
   },

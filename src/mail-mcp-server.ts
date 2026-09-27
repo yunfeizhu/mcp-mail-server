@@ -14,12 +14,19 @@ import { type EmailOptions } from './smtp-client';
 import { EMAIL_CONFIG } from './config';
 import { SerialTaskQueue } from './async-queue';
 import { FileAccessPolicy } from './file-access-policy';
-import { type MessageRef, parseMessageRef, parseMoveMessageRef } from './message-ref';
+import {
+  type MessageRef,
+  parseMessageRef,
+  parseMoveMessageRef,
+  parseUidBatch,
+} from './message-ref';
 import { MAIL_TOOLS, type MailToolName } from './tool-definitions';
 import {
   type ContinueEmailThreadArgs,
+  type DeleteMessagesArgs,
   type FindUnrepliedMessagesArgs,
   type GetMessagesArgs,
+  type MoveMessagesArgs,
   type ReplyInfo,
   type ReplyToEmailArgs,
   type SearchMessagesArgs,
@@ -145,6 +152,10 @@ export class MailMCPServer {
         return await this.handleDeleteMessage(args);
       case 'move_message':
         return await this.handleMoveMessage(args);
+      case 'move_messages':
+        return await this.handleMoveMessages(args as unknown as MoveMessagesArgs);
+      case 'delete_messages':
+        return await this.handleDeleteMessages(args as unknown as DeleteMessagesArgs);
       case 'save_attachment':
         return await this.handleSaveAttachment(args);
       case 'send_email':
@@ -470,6 +481,218 @@ export class MailMCPServer {
       }
       throw new Error(this.formatError(error, 'Failed to move message'), { cause: error });
     }
+  }
+
+  /**
+   * Move several messages out of one mailbox in a single call.
+   *
+   * IMAP offers no atomic multi-message MOVE, so each UID is moved on its own
+   * and reported on its own; one failure never aborts the remaining UIDs.
+   *
+   * Re-select the source read-write and check the batch's initial UIDVALIDITY
+   * before each move: failure recovery can leave it read-only, unselected, or
+   * in a new UIDVALIDITY epoch. Refresh the destination only after the loop,
+   * because selecting it earlier would redirect later moves.
+   */
+  private async handleMoveMessages(args: MoveMessagesArgs): Promise<CallToolResult> {
+    await this.connections.ensure(true, false);
+
+    const uids = parseUidBatch(args.uids);
+    // Validate the mailbox pair and each UID up front so a bad request fails
+    // before anything has been moved.
+    const firstRef = parseMoveMessageRef({
+      mailbox: args.mailbox,
+      uid: uids[0],
+      uidValidity: args.uidValidity,
+      targetMailbox: args.targetMailbox,
+    });
+    const { mailbox, targetMailbox } = firstRef;
+
+    const sourceMailboxInfo = await this.openMessageRef(firstRef, false);
+
+    type MoveOutcome = {
+      uid: number;
+      moved: boolean;
+      destinationUid?: number;
+      partial?: boolean;
+      copyOutcome?: string;
+      sourceState?: unknown;
+      sourceDeletedFlag?: boolean;
+      error?: string;
+    };
+
+    const results: MoveOutcome[] = [];
+
+    for (const uid of uids) {
+      try {
+        await this.openMessageRef(
+          { mailbox, uid, uidValidity: sourceMailboxInfo.uidvalidity },
+          false,
+        );
+        const result = await this.connections.imap.moveMessage(uid, targetMailbox);
+        results.push({ uid, moved: true, destinationUid: result.destinationUid });
+      } catch (error) {
+        if (error instanceof PartialMoveError) {
+          results.push({
+            uid,
+            moved: false,
+            partial: true,
+            copyOutcome: error.copyOutcome,
+            sourceState: error.sourceState,
+            sourceDeletedFlag: error.sourceDeletedFlag,
+            destinationUid: error.destinationUid,
+            error: this.redactDiagnosticMessage(error.message),
+          });
+          continue;
+        }
+        results.push({
+          uid,
+          moved: false,
+          error: this.redactDiagnosticMessage(
+            error instanceof Error ? error.message : String(error),
+          ),
+        });
+      }
+    }
+
+    const movedUids = results.filter(entry => entry.moved).map(entry => entry.uid);
+    const failed = results.filter(entry => !entry.moved);
+    const partialUids = failed.filter(entry => entry.partial).map(entry => entry.uid);
+
+    const response: Record<string, unknown> = {
+      sourceMailbox: mailbox,
+      sourceUidValidity: sourceMailboxInfo.uidvalidity,
+      targetMailbox,
+      requestedCount: uids.length,
+      movedCount: movedUids.length,
+      failedCount: failed.length,
+      movedUids,
+      results,
+    };
+
+    // One refresh after the loop; selecting the target here is safe.
+    if (movedUids.length > 0) {
+      const anyDestinationUid = results.find(
+        entry => entry.moved && entry.destinationUid !== undefined,
+      )?.destinationUid;
+      if (anyDestinationUid !== undefined) {
+        const destinationReference = await this.refreshDestinationReference(
+          targetMailbox,
+          anyDestinationUid,
+        );
+        if (destinationReference.destinationUidValidity !== undefined) {
+          response.destinationUidValidity = destinationReference.destinationUidValidity;
+        }
+        if (destinationReference.destinationReferenceError !== undefined) {
+          response.destinationReferenceError = destinationReference.destinationReferenceError;
+        }
+      } else {
+        response.note =
+          'The server did not return destination UIDs. Search the target mailbox to refresh message references.';
+      }
+    }
+
+    if (partialUids.length > 0) {
+      response.note =
+        `Some messages reported an unconfirmed move (UIDs ${partialUids.join(', ')}). ` +
+        'Do not retry those blindly; inspect both mailboxes first to avoid duplicate copies.';
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: JSON.stringify(response, null, 2) }],
+      ...(failed.length > 0 ? { isError: true as const } : {}),
+    };
+  }
+
+  /**
+   * Permanently delete several messages from one mailbox in a single call.
+   *
+   * Each UID is expunged on its own and reported on its own; one failure never
+   * aborts the remaining UIDs. Re-select the explicit source and check the
+   * batch's initial UIDVALIDITY before each deletion, since failure recovery
+   * can clear or change the selected mailbox state.
+   */
+  private async handleDeleteMessages(args: DeleteMessagesArgs): Promise<CallToolResult> {
+    await this.connections.ensure(true, false);
+
+    const uids = parseUidBatch(args.uids);
+    const firstRef = parseMessageRef({
+      mailbox: args.mailbox,
+      uid: uids[0],
+      uidValidity: args.uidValidity,
+    });
+
+    const mailboxInfo = await this.openMessageRef(firstRef, false);
+
+    type DeleteOutcome = {
+      uid: number;
+      deleted: boolean;
+      partial?: boolean;
+      outcome?: string;
+      stage?: string;
+      sourceState?: unknown;
+      sourceDeletedFlag?: boolean;
+      error?: string;
+    };
+
+    const results: DeleteOutcome[] = [];
+
+    for (const uid of uids) {
+      try {
+        await this.openMessageRef(
+          { mailbox: firstRef.mailbox, uid, uidValidity: mailboxInfo.uidvalidity },
+          false,
+        );
+        await this.connections.imap.deleteMessage(uid, mailboxInfo.uidvalidity);
+        results.push({ uid, deleted: true });
+      } catch (error) {
+        if (error instanceof DeleteMessageError) {
+          results.push({
+            uid,
+            deleted: false,
+            partial: error.outcome === 'unknown' || error.sourceDeletedFlag === true,
+            outcome: error.outcome,
+            stage: error.stage,
+            sourceState: error.sourceState,
+            sourceDeletedFlag: error.sourceDeletedFlag,
+            error: this.redactDiagnosticMessage(error.message),
+          });
+          continue;
+        }
+        results.push({
+          uid,
+          deleted: false,
+          error: this.redactDiagnosticMessage(
+            error instanceof Error ? error.message : String(error),
+          ),
+        });
+      }
+    }
+
+    const deletedUids = results.filter(entry => entry.deleted).map(entry => entry.uid);
+    const failed = results.filter(entry => !entry.deleted);
+    const partialUids = failed.filter(entry => entry.partial).map(entry => entry.uid);
+
+    const response: Record<string, unknown> = {
+      sourceMailbox: firstRef.mailbox,
+      sourceUidValidity: mailboxInfo.uidvalidity,
+      requestedCount: uids.length,
+      deletedCount: deletedUids.length,
+      failedCount: failed.length,
+      deletedUids,
+      results,
+    };
+
+    if (partialUids.length > 0) {
+      response.note =
+        `Some messages reported an unconfirmed deletion (UIDs ${partialUids.join(', ')}). ` +
+        'Refresh the mailbox reference and inspect those messages before retrying.';
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: JSON.stringify(response, null, 2) }],
+      ...(failed.length > 0 ? { isError: true as const } : {}),
+    };
   }
 
   private async refreshDestinationReference(

@@ -103,7 +103,7 @@ test('stdio server initializes and exposes mailbox-scoped message tools', async 
     assert.equal(client.getServerVersion()?.version, '2.0.2');
     const result = await client.listTools();
     const tools = result.tools as any[];
-    assert.equal(tools.length, 12);
+    assert.equal(tools.length, 14);
 
     const toolNames = tools.map(tool => tool.name);
     assert.deepEqual(toolNames, [
@@ -117,7 +117,9 @@ test('stdio server initializes and exposes mailbox-scoped message tools', async 
       'reply_to_email',
       'continue_email_thread',
       'move_message',
+      'move_messages',
       'delete_message',
+      'delete_messages',
       'save_attachment',
     ]);
     assert.equal(toolNames.includes('open_mailbox'), false);
@@ -129,6 +131,8 @@ test('stdio server initializes and exposes mailbox-scoped message tools', async 
     const getMessages = tools.find(tool => tool.name === 'get_messages');
     const deleteMessage = tools.find(tool => tool.name === 'delete_message');
     const moveMessage = tools.find(tool => tool.name === 'move_message');
+    const moveMessages = tools.find(tool => tool.name === 'move_messages');
+    const deleteMessages = tools.find(tool => tool.name === 'delete_messages');
     const sendEmail = tools.find(tool => tool.name === 'send_email');
     const replyToEmail = tools.find(tool => tool.name === 'reply_to_email');
     const continueEmailThread = tools.find(tool => tool.name === 'continue_email_thread');
@@ -138,6 +142,8 @@ test('stdio server initializes and exposes mailbox-scoped message tools', async 
     assert.ok(getMessages);
     assert.ok(deleteMessage);
     assert.ok(moveMessage);
+    assert.ok(moveMessages);
+    assert.ok(deleteMessages);
     assert.ok(sendEmail);
     assert.ok(replyToEmail);
     assert.ok(continueEmailThread);
@@ -155,6 +161,18 @@ test('stdio server initializes and exposes mailbox-scoped message tools', async 
     assert.equal(searchMessages.inputSchema.properties.includeBody.default, false);
     assert.equal(searchMessages.inputSchema.properties.mailboxes.uniqueItems, true);
     assert.equal(getMessages.inputSchema.properties.uids.uniqueItems, true);
+    assert.deepEqual(moveMessages.inputSchema.required, ['mailbox', 'uids', 'targetMailbox']);
+    assert.deepEqual(deleteMessages.inputSchema.required, ['mailbox', 'uids']);
+    assert.equal(moveMessages.inputSchema.properties.uids.uniqueItems, true);
+    assert.equal(deleteMessages.inputSchema.properties.uids.uniqueItems, true);
+    assert.equal(moveMessages.inputSchema.properties.uids.maxItems, 200);
+    assert.equal(deleteMessages.inputSchema.properties.uids.maxItems, 200);
+    assert.equal(moveMessages.inputSchema.properties.uids.minItems, 1);
+    assert.equal(deleteMessages.inputSchema.properties.uids.minItems, 1);
+    assert.equal(moveMessages.annotations.destructiveHint, true);
+    assert.equal(deleteMessages.annotations.destructiveHint, true);
+    assert.equal(moveMessages.inputSchema.additionalProperties, false);
+    assert.equal(deleteMessages.inputSchema.additionalProperties, false);
     assert.deepEqual(sendEmail.inputSchema.properties.signature.anyOf, [
       { required: ['text'] },
       { required: ['html'] },
