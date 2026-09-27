@@ -2,13 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [2.1.0] - 2026-09-27
 
 ### Added
 
-- `move_messages` and `delete_messages` move or permanently delete up to 200 UIDs from one mailbox in a single call, so bulk mailbox maintenance no longer needs one tool call per message
-- Both tools move or delete each UID independently and return `requestedCount`, `failedCount`, the succeeded UID list and a per-UID `results` array preserving the existing `PartialMoveError` and `DeleteMessageError` diagnostics, because IMAP provides no atomic multi-message MOVE or EXPUNGE
+- `move_messages` and `delete_messages` move or permanently delete up to 200 distinct UIDs from one mailbox in a single call, bringing the public MCP surface to 14 tools
+- `save_attachment` accepts an exact `attachmentFilename` as an alternative to `attachmentIndex`; duplicate filenames require an index, and omitting both selectors still saves all attachments
+
+### Improved
+
+- Both batch tools execute each UID independently and return `requestedCount`, `movedCount` or `deletedCount`, `failedCount`, the succeeded UID list and a per-UID `results` array with partial-move and deletion-failure diagnostics
 - Both batch tools reselect the explicit source mailbox read-write and verify the initial UIDVALIDITY before each UID, preventing partial-failure recovery from redirecting operations, leaving the source read-only, or reusing stale UIDs; `move_messages` refreshes the destination reference only after the batch
+
+### Documentation
+
+- Document the batch tools, per-UID failure diagnostics, and attachment filename selection in both English and Chinese
+- State the Node.js 22.13.0 minimum before the quick-start client configuration examples
 
 ## [2.0.2] - 2026-08-19
 

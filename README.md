@@ -207,6 +207,8 @@ Configuration file names and schemas are client-specific; do not assume every cl
 
 ## Tools at a glance
 
+The server exposes 14 tools, with explicit mailbox references for message operations.
+
 | Capability  | Tools                                                                                               |
 | ----------- | --------------------------------------------------------------------------------------------------- |
 | Connection  | `check_connection`                                                                                  |
@@ -427,6 +429,25 @@ The MCP server and the version-pinned Inspector both require Node.js 22.13 or ne
 ## Release notes
 
 <details open>
+<summary><strong>v2.1.0</strong> — batch mailbox maintenance and attachment filename selection</summary>
+
+**Added**
+
+- `move_messages` and `delete_messages` handle up to 200 distinct UIDs from one mailbox per call, bringing the server to 14 tools.
+- `save_attachment` can select one attachment by exact `attachmentFilename` instead of `attachmentIndex`. Duplicate filenames require an index; omit both selectors to save all attachments.
+
+**Improved**
+
+- Batch operations report success and failure counts plus per-UID results. A failed UID does not abort the remaining entries; inspect failed results before retrying.
+- Each batch operation reselects the source mailbox read-write and verifies the initial UIDVALIDITY before acting on a UID, even when the caller omits `uidValidity`. Destination references are refreshed after the move batch completes.
+
+**Documentation**
+
+- Updated the English and Chinese tool references and made the Node.js 22.13.0 minimum explicit before client setup.
+
+</details>
+
+<details>
 <summary><strong>v2.0.2</strong> — restore complete message and attachment parsing</summary>
 
 **Fixed**
