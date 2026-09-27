@@ -489,11 +489,10 @@ export class MailMCPServer {
    * IMAP offers no atomic multi-message MOVE, so each UID is moved on its own
    * and reported on its own; one failure never aborts the remaining UIDs.
    *
-   * The source mailbox is selected once and kept selected for every move,
-   * because `imap.moveMessage` acts on the currently selected box. The
-   * destination reference is therefore refreshed only after the loop finishes
-   * -- refreshing it per message would select the target mailbox and silently
-   * redirect every later move.
+   * Re-select the source read-write and check the batch's initial UIDVALIDITY
+   * before each move: failure recovery can leave it read-only, unselected, or
+   * in a new UIDVALIDITY epoch. Refresh the destination only after the loop,
+   * because selecting it earlier would redirect later moves.
    */
   private async handleMoveMessages(args: MoveMessagesArgs): Promise<CallToolResult> {
     await this.connections.ensure(true, false);
@@ -526,6 +525,10 @@ export class MailMCPServer {
 
     for (const uid of uids) {
       try {
+        await this.openMessageRef(
+          { mailbox, uid, uidValidity: sourceMailboxInfo.uidvalidity },
+          false,
+        );
         const result = await this.connections.imap.moveMessage(uid, targetMailbox);
         results.push({ uid, moved: true, destinationUid: result.destinationUid });
       } catch (error) {
@@ -605,8 +608,9 @@ export class MailMCPServer {
    * Permanently delete several messages from one mailbox in a single call.
    *
    * Each UID is expunged on its own and reported on its own; one failure never
-   * aborts the remaining UIDs. Unlike the move path this never changes the
-   * selected mailbox, so the loop needs no re-selection.
+   * aborts the remaining UIDs. Re-select the explicit source and check the
+   * batch's initial UIDVALIDITY before each deletion, since failure recovery
+   * can clear or change the selected mailbox state.
    */
   private async handleDeleteMessages(args: DeleteMessagesArgs): Promise<CallToolResult> {
     await this.connections.ensure(true, false);
@@ -635,6 +639,10 @@ export class MailMCPServer {
 
     for (const uid of uids) {
       try {
+        await this.openMessageRef(
+          { mailbox: firstRef.mailbox, uid, uidValidity: mailboxInfo.uidvalidity },
+          false,
+        );
         await this.connections.imap.deleteMessage(uid, mailboxInfo.uidvalidity);
         results.push({ uid, deleted: true });
       } catch (error) {

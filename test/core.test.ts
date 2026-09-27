@@ -106,6 +106,148 @@ function loadMailRuntime(): Promise<any> {
   return mailRuntimePromise;
 }
 
+interface BatchMutationFixtureOptions {
+  failureStage?: 'store' | 'expunge';
+  recoverySelectionFailure?: 'once' | 'persistent';
+  changeUidValidity?: boolean;
+}
+
+async function createBatchMutationFixture(options: BatchMutationFixtureOptions = {}) {
+  const [, { MailMCPServer }] = await loadMailRuntime();
+  const transport = new TestEventEmitter();
+  const mailboxes = new Map([
+    [
+      'Work',
+      {
+        uidValidity: 7,
+        messages: new Map([
+          [1, false],
+          [2, false],
+          [3, false],
+        ]),
+      },
+    ],
+    [
+      'INBOX',
+      {
+        uidValidity: 7,
+        messages: new Map([
+          [2, false],
+          [3, false],
+        ]),
+      },
+    ],
+    ['Archive', { uidValidity: 9, messages: new Map<number, boolean>() }],
+  ]);
+  const events: Array<{
+    operation: string;
+    mailbox: string;
+    uid?: number;
+    readOnly?: boolean;
+    uidValidity?: number;
+  }> = [];
+  let selected: string | null = null;
+  let readOnly = false;
+  let selectionFailed = false;
+  let epochChanged = false;
+  let nextDestinationUid = 100;
+
+  transport.serverSupports = capability => capability === 'UIDPLUS';
+  transport.openBox = (mailbox, requestedReadOnly, callback) => {
+    events.push({ operation: 'select', mailbox, readOnly: requestedReadOnly });
+    if (
+      mailbox === 'Work' &&
+      options.recoverySelectionFailure &&
+      ((!selectionFailed && requestedReadOnly) ||
+        (selectionFailed && options.recoverySelectionFailure === 'persistent'))
+    ) {
+      selectionFailed = true;
+      selected = null;
+      callback(new Error('source temporarily unavailable'));
+      return;
+    }
+    const box = mailboxes.get(mailbox);
+    if (mailbox === 'Work' && requestedReadOnly && options.changeUidValidity && !epochChanged) {
+      epochChanged = true;
+      box.uidValidity = 8;
+      box.messages = new Map([
+        [2, false],
+        [3, false],
+      ]);
+    }
+    selected = mailbox;
+    readOnly = requestedReadOnly;
+    callback(null, {
+      uidvalidity: box.uidValidity,
+      uidnext: 200,
+      messages: { total: box.messages.size, new: 0, unseen: 0 },
+      permFlags: [],
+    });
+  };
+  transport.search = (criteria, callback) => {
+    const uids = criteria.find(item => Array.isArray(item) && item[0] === 'UID').slice(1);
+    const messages = mailboxes.get(selected).messages;
+    callback(
+      null,
+      uids.filter(uid => messages.has(uid) && (!criteria.includes('DELETED') || messages.get(uid))),
+    );
+  };
+  transport.copy = (uid, targetMailbox, callback) => {
+    const destinationUid = ++nextDestinationUid;
+    events.push({
+      operation: 'copy',
+      mailbox: selected,
+      uid,
+      readOnly,
+      uidValidity: mailboxes.get(selected).uidValidity,
+    });
+    mailboxes.get(targetMailbox).messages.set(destinationUid, false);
+    callback(null, String(destinationUid));
+  };
+  transport.addFlags = (uid, _flags, callback) => {
+    events.push({ operation: 'store', mailbox: selected, uid, readOnly });
+    if (readOnly || (uid === 1 && options.failureStage === 'store')) {
+      callback(new Error(readOnly ? 'mailbox is read-only' : 'transient STORE failure'));
+      return;
+    }
+    mailboxes.get(selected).messages.set(uid, true);
+    callback(null);
+  };
+  transport.delFlags = (uid, _flags, callback) => {
+    if (readOnly) {
+      callback(new Error('mailbox is read-only'));
+      return;
+    }
+    mailboxes.get(selected).messages.set(uid, false);
+    callback(null);
+  };
+  transport.expunge = (uid, callback) => {
+    events.push({ operation: 'expunge', mailbox: selected, uid });
+    if (readOnly || (uid === 1 && options.failureStage === 'expunge')) {
+      callback(new Error(readOnly ? 'mailbox is read-only' : 'transient EXPUNGE failure'));
+      return;
+    }
+    const messages = mailboxes.get(selected).messages;
+    if (messages.get(uid)) {
+      messages.delete(uid);
+    }
+    callback(null);
+  };
+
+  const imap = new IMAPClient({
+    host: 'imap.example.com',
+    port: 993,
+    username: 'sender@example.com',
+    password: 'not-used',
+  });
+  imap.imap = transport;
+  imap.authenticated = true;
+  imap.connected = true;
+  const server = new MailMCPServer({ registerProcessHandlers: false });
+  server.connections = { ensure: async () => {}, imap };
+  return { server, mailboxes, events };
+}
+
 test('mail configuration rejects plaintext IMAP and requires TLS for SMTP submission', () => {
   const baseEnv = {
     ...process.env,
@@ -1037,6 +1179,7 @@ test('path policy rejects sibling-prefix escapes', () => {
 test('FileAccessPolicy enforces roots and size limits', async () => {
   const allowedRoot = await mkdtemp(path.join(tmpdir(), 'mcp-mail-allowed-'));
   const outsideRoot = await mkdtemp(path.join(tmpdir(), 'mcp-mail-outside-'));
+  const directoryLinkType = process.platform === 'win32' ? 'junction' : 'dir';
 
   try {
     const allowedFile = path.join(allowedRoot, 'small.txt');
@@ -1045,7 +1188,7 @@ test('FileAccessPolicy enforces roots and size limits', async () => {
     await writeFile(allowedFile, '1234');
     await writeFile(oversizedFile, '12345');
     await writeFile(outsideFile, '1');
-    await symlink(outsideRoot, path.join(allowedRoot, 'escape-link'));
+    await symlink(outsideRoot, path.join(allowedRoot, 'escape-link'), directoryLinkType);
 
     const policy = new FileAccessPolicy({ allowedRoots: [allowedRoot], maxAttachmentBytes: 4 });
     assert.equal((await policy.getReadableAttachmentPath(allowedFile)).size, 4);
@@ -1076,7 +1219,7 @@ test('FileAccessPolicy enforces roots and size limits', async () => {
     const downloadsPath = path.join(allowedRoot, 'downloads');
     const movedDownloadsPath = path.join(allowedRoot, 'downloads-moved');
     await rename(downloadsPath, movedDownloadsPath);
-    await symlink(outsideRoot, downloadsPath);
+    await symlink(outsideRoot, downloadsPath, directoryLinkType);
     await assert.rejects(
       () => policy.writeNewFile(downloadsPath, 'escaped.txt', Buffer.from('1')),
       /resolves outside MAIL_ALLOWED_ROOTS/,
@@ -1897,6 +2040,158 @@ test('MailMCPServer exposes an ambiguous permanent deletion as a structured erro
   assert.match(result.note, /Refresh the mailbox reference/);
   await server.server.close();
 });
+
+test('MailMCPServer batch move preserves source identity and refreshes the destination after all moves', async t => {
+  const { server, mailboxes, events } = await createBatchMutationFixture();
+  t.after(() => server.server.close());
+  const response = await server.handleMoveMessages({
+    mailbox: 'Work',
+    uids: [1, 2, 3],
+    targetMailbox: 'Archive',
+    uidValidity: 7,
+  });
+  const result = JSON.parse(response.content[0].text);
+  assert.notEqual(response.isError, true);
+  assert.equal(result.requestedCount, 3);
+  assert.equal(result.movedCount, 3);
+  assert.equal(result.failedCount, 0);
+  assert.deepEqual(result.movedUids, [1, 2, 3]);
+  assert.deepEqual(
+    result.results.map(entry => entry.destinationUid),
+    [101, 102, 103],
+  );
+  assert.equal(result.sourceUidValidity, 7);
+  assert.equal(result.destinationUidValidity, 9);
+  assert.equal(mailboxes.get('Work').messages.size, 0);
+  assert.equal(mailboxes.get('Archive').messages.size, 3);
+  assert.deepEqual([...mailboxes.get('INBOX').messages.keys()], [2, 3]);
+  const destinationSelection = events.findIndex(
+    entry => entry.operation === 'select' && entry.mailbox === 'Archive',
+  );
+  assert.ok(destinationSelection > events.map(entry => entry.operation).lastIndexOf('copy'));
+});
+
+for (const failureStage of ['store', 'expunge'] as const) {
+  test(
+    'MailMCPServer batch move restores writable source after ' + failureStage + ' failure',
+    async t => {
+      const { server, mailboxes, events } = await createBatchMutationFixture({ failureStage });
+      t.after(() => server.server.close());
+      const response = await server.handleMoveMessages({
+        mailbox: 'Work',
+        uids: [1, 2, 3],
+        targetMailbox: 'Archive',
+        uidValidity: 7,
+      });
+      const result = JSON.parse(response.content[0].text);
+      assert.equal(response.isError, true);
+      assert.equal(result.movedCount, 2);
+      assert.equal(result.failedCount, 1);
+      assert.deepEqual(result.movedUids, [2, 3]);
+      assert.deepEqual(
+        result.results.map(entry => entry.moved),
+        [false, true, true],
+      );
+      assert.equal(result.results[0].partial, true);
+      assert.equal(result.results[0].copyOutcome, 'succeeded');
+      assert.equal(result.results[0].sourceState, 'present');
+      assert.equal(result.results[0].sourceDeletedFlag, false);
+      assert.deepEqual([...mailboxes.get('Work').messages], [[1, false]]);
+      assert.equal(mailboxes.get('Archive').messages.size, 3);
+      assert.deepEqual(
+        events.filter(entry => entry.operation === 'copy').map(entry => entry.readOnly),
+        [false, false, false],
+      );
+      assert.match(result.note, /Do not retry/);
+    },
+  );
+}
+
+for (const recoverySelectionFailure of ['once', 'persistent'] as const) {
+  test(
+    'MailMCPServer batch delete stays in the requested mailbox after ' +
+      recoverySelectionFailure +
+      ' selection failure',
+    async t => {
+      const { server, mailboxes, events } = await createBatchMutationFixture({
+        failureStage: 'store',
+        recoverySelectionFailure,
+      });
+      t.after(() => server.server.close());
+      const response = await server.handleDeleteMessages({
+        mailbox: 'Work',
+        uids: [1, 2, 3],
+        uidValidity: 7,
+      });
+      const result = JSON.parse(response.content[0].text);
+      const sourceRecovers = recoverySelectionFailure === 'once';
+      assert.equal(response.isError, true);
+      assert.equal(result.requestedCount, 3);
+      assert.equal(result.deletedCount, sourceRecovers ? 2 : 0);
+      assert.equal(result.failedCount, sourceRecovers ? 1 : 3);
+      assert.deepEqual(result.deletedUids, sourceRecovers ? [2, 3] : []);
+      assert.deepEqual(
+        [...mailboxes.get('Work').messages.keys()],
+        sourceRecovers ? [1] : [1, 2, 3],
+      );
+      assert.deepEqual([...mailboxes.get('INBOX').messages.keys()], [2, 3]);
+      assert.equal(result.results[0].outcome, 'unknown');
+      assert.equal(result.results[0].stage, 'mark-deleted');
+      assert.deepEqual(
+        events.filter(entry => entry.operation === 'expunge').map(entry => entry.mailbox),
+        sourceRecovers ? ['Work', 'Work'] : [],
+      );
+    },
+  );
+}
+
+for (const operation of ['move', 'delete'] as const) {
+  for (const uidValidity of [undefined, 7]) {
+    test(
+      'MailMCPServer batch ' +
+        operation +
+        ' rejects a changed UIDVALIDITY with ' +
+        (uidValidity === undefined ? 'omitted' : 'explicit') +
+        ' reference',
+      async t => {
+        const { server, mailboxes, events } = await createBatchMutationFixture({
+          failureStage: 'store',
+          changeUidValidity: true,
+        });
+        t.after(() => server.server.close());
+        const args = { mailbox: 'Work', uids: [1, 2, 3], uidValidity };
+        const response =
+          operation === 'move'
+            ? await server.handleMoveMessages({ ...args, targetMailbox: 'Archive' })
+            : await server.handleDeleteMessages(args);
+        const result = JSON.parse(response.content[0].text);
+        assert.equal(response.isError, true);
+        assert.equal(result.sourceUidValidity, 7);
+        assert.equal(result.failedCount, 3);
+        assert.equal(operation === 'move' ? result.movedCount : result.deletedCount, 0);
+        for (const entry of result.results.slice(1)) {
+          assert.match(entry.error, /UIDVALIDITY changed.*expected 7, got 8/);
+        }
+        assert.deepEqual(
+          [...mailboxes.get('Work').messages],
+          [
+            [2, false],
+            [3, false],
+          ],
+        );
+        assert.deepEqual([...mailboxes.get('INBOX').messages.keys()], [2, 3]);
+        assert.deepEqual(
+          events.filter(entry => entry.operation === 'store').map(entry => entry.uid),
+          [1],
+        );
+        assert.deepEqual(
+          events.filter(entry => entry.operation === 'copy').map(entry => entry.uid),
+          operation === 'move' ? [1] : [],
+        );
+      },
+    );
+  }
+}
 
 test('reply-all preserves Reply-To, To, and CC recipients while excluding the account', () => {
   assert.deepEqual(

@@ -207,14 +207,14 @@ env_vars = [
 
 ## 工具能力一览
 
-| 能力       | 工具                                                            |
-| ---------- | --------------------------------------------------------------- |
-| 连接管理   | `check_connection`                                              |
-| 邮箱文件夹 | `list_mailboxes`                                                |
-| 搜索发现   | `search_messages`、`find_unreplied_messages`                    |
-| 邮件处理   | `get_message`、`get_messages`、`move_message`、`delete_message` |
-| 撰写发送   | `send_email`、`reply_to_email`、`continue_email_thread`         |
-| 附件处理   | `get_message` 返回附件元数据，`save_attachment` 保存文件        |
+| 能力       | 工具                                                                                                |
+| ---------- | --------------------------------------------------------------------------------------------------- |
+| 连接管理   | `check_connection`                                                                                  |
+| 邮箱文件夹 | `list_mailboxes`                                                                                    |
+| 搜索发现   | `search_messages`、`find_unreplied_messages`                                                        |
+| 邮件处理   | `get_message`、`get_messages`、`move_message`、`move_messages`、`delete_message`、`delete_messages` |
+| 撰写发送   | `send_email`、`reply_to_email`、`continue_email_thread`                                             |
+| 附件处理   | `get_message` 返回附件元数据，`save_attachment` 保存文件                                            |
 
 <details>
 <summary>查看完整工具参数</summary>
@@ -248,7 +248,9 @@ env_vars = [
 - **get_message**: `mailbox` (字符串), `uid` (数字), `uidValidity` (数字, 可选), `markSeen` (布尔值, 可选)
 - **get_messages**: `mailbox` (字符串), `uids` (数组), `uidValidity` (数字, 可选), `markSeen` (布尔值, 可选)。任一请求 UID 不存在时，会在读取正文前整体失败；合计返回正文超过 `MAIL_MAX_RESPONSE_CHARACTERS` 时也会明确失败。
 - **move_message**: `mailbox` (字符串), `uid` (数字), `targetMailbox` (字符串), `uidValidity` (数字, 可选)。源 UID 和目标邮箱都必须已经存在；服务器不支持 MOVE 或 UIDPLUS 时会安全失败。服务器返回目标 UID 时，结果还会刷新 `destinationUidValidity`。UIDPLUS 降级路径清理源邮件报错时，会重新打开源目录、验证 UID，并尽可能回滚 `\\Deleted`。MOVE 或 COPY 确认前断线会返回 `isError: true`、`partial: true` 和 `copyOutcome: "unknown"`；已确认复制但源清理不确定时返回 `copyOutcome: "succeeded"`，以及经过验证的 `sourceState`、可选 `sourceDeletedFlag` 和可用的目标引用。两种情况都应先检查源和目标目录，再决定是否重试。
+- **move_messages**：`mailbox`（字符串）、`uids`（数组）、`targetMailbox`（字符串）、`uidValidity`（数字，可选）。一次移动同一邮箱中的 1–200 个不同 UID，逐条执行并报告；某条失败不影响其余邮件。每条移动前重新以可写方式选中源邮箱，并校验批次开始时的 UIDVALIDITY，即使调用方未提供 `uidValidity` 也会执行校验。目标邮箱引用仅在整个批次完成后刷新。返回 `requestedCount`、`movedCount`、`failedCount`、`movedUids` 和逐条 `results`，保留 `copyOutcome`、`sourceState`、`sourceDeletedFlag` 等部分失败诊断。任一失败都会设置 `isError: true`；重试前应检查对应邮件及源、目标邮箱。
 - **delete_message**: `mailbox` (字符串), `uid` (数字), `uidValidity` (数字, 可选)。先确认 UID 存在，再仅永久删除指定 UID。STORE 或 UID EXPUNGE 报错时会重新验证源 UID，并尽可能回滚 `\\Deleted`；无法确认的传输错误返回结构化 `outcome: "unknown"`，不再武断地声称邮件未删除。
+- **delete_messages**：`mailbox`（字符串）、`uids`（数组）、`uidValidity`（数字，可选）。一次永久删除同一邮箱中的 1–200 个不同 UID，使用定向 UID EXPUNGE 逐条执行并报告。每条删除前明确选中源邮箱并校验批次开始时的 UIDVALIDITY；选箱失败或 UIDVALIDITY 变化时拒绝该条删除。返回 `requestedCount`、`deletedCount`、`failedCount`、`deletedUids` 和逐条 `results`，保留 `outcome`、`stage` 等诊断。任一失败都会设置 `isError: true`；对无法确认的删除应先刷新邮箱并检查邮件，再决定是否重试。
 
 ### 邮件发送
 
