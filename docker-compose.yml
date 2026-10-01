@@ -8,7 +8,7 @@
 # Credentials are read from a local .env file (see .env.example).
 services:
   mcp-mail-server:
-    image: ${MCP_MAIL_SERVER_IMAGE:-hubermi/mcp-mail-server:latest}
+    image: ${MCP_MAIL_SERVER_IMAGE:-ghcr.io/hubermi/mcp-mail-server:latest}
     build: .
     stdin_open: true
     init: true
