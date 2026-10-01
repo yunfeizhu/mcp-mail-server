@@ -1,0 +1,16 @@
+.git
+.github
+node_modules
+dist
+coverage
+*.log
+*.tgz
+.env
+.env.*
+!.env.example
+.agent
+.agents
+.claude
+.codex
+Dockerfile
+docker-compose*.yml

@@ -1,0 +1,31 @@
+# Example Docker Compose setup for mcp-mail-server.
+#
+# The server communicates over stdio, so an MCP client has to attach to the
+# container's stdin/stdout, e.g.:
+#
+#   docker compose run --rm -T mcp-mail-server
+#
+# Credentials are read from a local .env file (see .env.example).
+services:
+  mcp-mail-server:
+    image: ${MCP_MAIL_SERVER_IMAGE:-hubermi/mcp-mail-server:latest}
+    build: .
+    stdin_open: true
+    init: true
+    restart: 'no'
+    env_file: .env
+    environment:
+      # Allow attachment downloads/uploads inside the mounted /data volume.
+      MAIL_ALLOWED_ROOTS: /data
+    volumes:
+      - mail-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  mail-data:
