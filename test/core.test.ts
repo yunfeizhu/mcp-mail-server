@@ -33,6 +33,7 @@ import {
   appendQuotedOriginal,
   appendSignature,
   buildReplyRecipients,
+  cleanReplySubject,
   ensureHtmlAlternative,
   extractEmailsFromAddressField,
 } from '../src/mail-utils';
@@ -416,6 +417,25 @@ test('SerialTaskQueue does not interleave stateful tasks', async () => {
   releaseFirst();
   await Promise.all([first, second]);
   assert.deepEqual(events, ['first:start', 'first:end', 'second:start', 'second:end']);
+});
+
+test('cleanReplySubject strips ASCII and full-width reply prefixes', () => {
+  for (const subject of [
+    'Re: Hello',
+    'RE : Hello',
+    'Re：Hello',
+    '回复: Hello',
+    '回复：Hello',
+    '答复：Hello',
+    'Re: 回复：RE : Hello',
+    're: Re: 答复 ： Hello',
+  ]) {
+    assert.equal(cleanReplySubject(subject), 'Hello', subject);
+  }
+  assert.equal(cleanReplySubject('Hello'), 'Hello');
+  assert.equal(cleanReplySubject('Report: Q3'), 'Report: Q3');
+  assert.equal(cleanReplySubject('Rebuild: Hello'), 'Rebuild: Hello');
+  assert.equal(cleanReplySubject(''), '');
 });
 
 test('parseMessageRef requires a mailbox-scoped positive UID', () => {
@@ -2341,10 +2361,17 @@ test('MailSearchService finds the newest exact sent thread after normalizing rep
       },
       async search(criteria) {
         searchCriteria = criteria;
-        return [1, 2, 3];
+        return [1, 2, 3, 4];
       },
       async fetchMessages() {
         return [
+          {
+            uid: 4,
+            sourceMailbox: 'Sent',
+            uidValidity: 91,
+            date: '2026-07-21T12:00:00Z',
+            subject: '回复：Weekly report',
+          },
           {
             uid: 1,
             sourceMailbox: 'Sent',
@@ -2382,7 +2409,7 @@ test('MailSearchService finds the newest exact sent thread after normalizing rep
     since: '2026-07-01',
   });
   assert.equal(connectionChecks, 1);
-  assert.equal(message.uid, 3);
+  assert.equal(message.uid, 4);
   assert.deepEqual(searchCriteria.slice(0, 2), [
     ['TO', 'team@example.com'],
     ['SUBJECT', 'Weekly report'],

@@ -120,7 +120,7 @@ export function buildReplyRecipients(
 
 export function cleanReplySubject(subject: string): string {
   if (!subject) return '';
-  const prefixPattern = /^(?:re:|回复:|答复:)\s*/i;
+  const prefixPattern = /^(?:re|回复|答复)\s*[:：]\s*/i;
   let cleaned = subject.trim();
   let previous: string;
   do {
