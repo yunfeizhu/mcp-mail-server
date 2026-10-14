@@ -436,9 +436,19 @@ GitHub Actions 会在每次推送分支和提交 PR 时，通过 Node.js 22、24
 
 <!-- release-notes:start -->
 
+<details open>
+<summary><strong>v2.1.1</strong> — 2026-10-14</summary>
+
+### 修复
+
+- strip full-width and spaced reply prefixes ([21aceca](https://github.com/yunfeizhu/mcp-mail-server/commit/21aceca66442717fca72ec9dd42f25b9bbcd6a51))
+- strip full-width and spaced reply prefixes ([54c113b](https://github.com/yunfeizhu/mcp-mail-server/commit/54c113bd81f985112358586e3dbd3575a7a48277))
+
+</details>
+
 <!-- release-notes:end -->
 
-<details open>
+<details>
 <summary><strong>v2.1.0</strong> — 批量邮件维护与按文件名选择附件</summary>
 
 **新增**

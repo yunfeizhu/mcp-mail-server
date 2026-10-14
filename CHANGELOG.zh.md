@@ -2,6 +2,17 @@
 
 本文件记录项目的所有重要变更。
 
+<!-- release-changelog:start -->
+
+## [2.1.1] - 2026-10-14
+
+### 修复
+
+- strip full-width and spaced reply prefixes ([21aceca](https://github.com/yunfeizhu/mcp-mail-server/commit/21aceca66442717fca72ec9dd42f25b9bbcd6a51))
+- strip full-width and spaced reply prefixes ([54c113b](https://github.com/yunfeizhu/mcp-mail-server/commit/54c113bd81f985112358586e3dbd3575a7a48277))
+
+<!-- release-changelog:end -->
+
 ## [2.1.0] - 2026-09-27
 
 ### 新增
