@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { readFileSync } from 'node:fs';
 import path from 'path';
 import {
   type EmailMessage,
@@ -45,6 +46,10 @@ import {
 import { MailSearchService } from './search-service';
 import { MailConnectionManager } from './mail-connection-manager';
 
+const { version: packageVersion } = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+) as { version: string };
+
 export class MailMCPServer {
   private server: McpServer;
   private readonly toolQueue = new SerialTaskQueue();
@@ -71,7 +76,7 @@ export class MailMCPServer {
     });
     this.server = new McpServer({
       name: 'mcp-mail',
-      version: '2.1.0',
+      version: packageVersion,
     });
 
     this.setupToolHandlers();

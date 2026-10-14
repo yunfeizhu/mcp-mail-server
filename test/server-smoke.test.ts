@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -100,7 +101,10 @@ test('stdio server initializes and exposes mailbox-scoped message tools', async 
 
   try {
     await client.connect(transport);
-    assert.equal(client.getServerVersion()?.version, '2.1.0');
+    const manifest = JSON.parse(
+      await readFile(new URL('../package.json', import.meta.url), 'utf8'),
+    ) as { version: string };
+    assert.equal(client.getServerVersion()?.version, manifest.version);
     const result = await client.listTools();
     const tools = result.tools as any[];
     assert.equal(tools.length, 14);

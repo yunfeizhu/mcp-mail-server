@@ -426,6 +426,12 @@ Click **Connect**, open **Tools**, and call `check_connection` to verify IMAP an
 
 The MCP server and the version-pinned Inspector both require Node.js 22.13 or newer.
 
+### Automated checks and npm publishing
+
+GitHub Actions validates every branch push and pull request on Node.js 22 and 24, including formatting, lint, types, the release build, tests, release metadata, and npm package contents. Stable `vX.Y.Z` tags on `main` trigger a fresh verification and publish the verified tarball to npm through OIDC trusted publishing.
+
+Maintainers must configure the npm trusted publisher once. See the [release guide](https://github.com/yunfeizhu/mcp-mail-server/blob/main/.github/RELEASING.md) for the exact settings, version/tag preparation, and retry instructions.
+
 ## Release notes
 
 <details open>

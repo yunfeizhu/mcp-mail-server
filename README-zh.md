@@ -426,6 +426,12 @@ npm run dev:inspector
 
 MCP 服务和固定版本的 Inspector 均需要 Node.js 22.13 或更高版本。
 
+### 自动验证与 npm 发布
+
+GitHub Actions 会在每次推送分支和提交 PR 时，通过 Node.js 22、24 自动检查格式、lint、类型、发布构建、测试、发布元数据和 npm 包内容。指向 `main` 上提交的稳定版 `vX.Y.Z` 标签会触发完整复检，并通过 OIDC Trusted Publishing 将已验证的 tarball 发布到 npm。
+
+维护者需要在 npm 一次性配置 Trusted Publisher。具体字段、版本与标签准备、失败重试见 [发布指南](https://github.com/yunfeizhu/mcp-mail-server/blob/main/.github/RELEASING.zh.md)。
+
 ## 版本说明
 
 <details open>
