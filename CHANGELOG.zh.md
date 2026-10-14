@@ -8,8 +8,7 @@
 
 ### 修复
 
-- strip full-width and spaced reply prefixes ([21aceca](https://github.com/yunfeizhu/mcp-mail-server/commit/21aceca66442717fca72ec9dd42f25b9bbcd6a51))
-- strip full-width and spaced reply prefixes ([54c113b](https://github.com/yunfeizhu/mcp-mail-server/commit/54c113bd81f985112358586e3dbd3575a7a48277))
+- 修复 `Re`、`回复`、`答复` 使用全角冒号 `：` 或冒号前带空白时无法正确清理回复前缀的问题。`回复：Hello`、`RE : Hello` 和 `Re: 回复：RE : Hello` 现在均规范化为 `Hello`，避免回复主题不断叠加前缀，并使已发送邮件的线程查找能正确匹配同一主题。([#17](https://github.com/yunfeizhu/mcp-mail-server/pull/17)，[#16](https://github.com/yunfeizhu/mcp-mail-server/issues/16))
 
 <!-- release-changelog:end -->
 
