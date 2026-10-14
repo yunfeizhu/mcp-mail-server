@@ -436,9 +436,19 @@ Maintainers must enable Actions-created PRs and configure the npm trusted publis
 
 <!-- release-notes:start -->
 
+<details open>
+<summary><strong>v2.1.1</strong> — 2026-10-14</summary>
+
+### Bug Fixes
+
+- strip full-width and spaced reply prefixes ([21aceca](https://github.com/yunfeizhu/mcp-mail-server/commit/21aceca66442717fca72ec9dd42f25b9bbcd6a51))
+- strip full-width and spaced reply prefixes ([54c113b](https://github.com/yunfeizhu/mcp-mail-server/commit/54c113bd81f985112358586e3dbd3575a7a48277))
+
+</details>
+
 <!-- release-notes:end -->
 
-<details open>
+<details>
 <summary><strong>v2.1.0</strong> — batch mailbox maintenance and attachment filename selection</summary>
 
 **Added**

@@ -4,11 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [2.1.1](https://github.com/yunfeizhu/mcp-mail-server/compare/v2.1.0...v2.1.1) (2026-10-14)
 
-
 ### Bug Fixes
 
-* strip full-width and spaced reply prefixes ([21aceca](https://github.com/yunfeizhu/mcp-mail-server/commit/21aceca66442717fca72ec9dd42f25b9bbcd6a51))
-* strip full-width and spaced reply prefixes ([54c113b](https://github.com/yunfeizhu/mcp-mail-server/commit/54c113bd81f985112358586e3dbd3575a7a48277))
+- strip full-width and spaced reply prefixes ([21aceca](https://github.com/yunfeizhu/mcp-mail-server/commit/21aceca66442717fca72ec9dd42f25b9bbcd6a51))
+- strip full-width and spaced reply prefixes ([54c113b](https://github.com/yunfeizhu/mcp-mail-server/commit/54c113bd81f985112358586e3dbd3575a7a48277))
 
 ## [2.1.0] - 2026-09-27
 
