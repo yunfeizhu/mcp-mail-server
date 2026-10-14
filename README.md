@@ -441,8 +441,7 @@ Maintainers must enable Actions-created PRs and configure the npm trusted publis
 
 ### Bug Fixes
 
-- strip full-width and spaced reply prefixes ([21aceca](https://github.com/yunfeizhu/mcp-mail-server/commit/21aceca66442717fca72ec9dd42f25b9bbcd6a51))
-- strip full-width and spaced reply prefixes ([54c113b](https://github.com/yunfeizhu/mcp-mail-server/commit/54c113bd81f985112358586e3dbd3575a7a48277))
+- Fix reply-subject normalization when `Re`, `回复`, or `答复` is followed by a full-width colon (`：`) or whitespace before the colon. Subjects such as `回复：Hello`, `RE : Hello`, and `Re: 回复：RE : Hello` now normalize to `Hello`, preventing stacked reply prefixes and missed matches when looking up sent threads. ([#17](https://github.com/yunfeizhu/mcp-mail-server/pull/17), [#16](https://github.com/yunfeizhu/mcp-mail-server/issues/16))
 
 </details>
 
