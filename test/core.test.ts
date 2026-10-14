@@ -42,7 +42,7 @@ import { isPathInsideRoot } from '../src/path-policy';
 import { MailSearchService as TypedMailSearchService } from '../src/search-service';
 import { SMTPClient as TypedSMTPClient } from '../src/smtp-client';
 import { MAIL_TOOLS } from '../src/tool-definitions';
-import { verifyReleaseMetadata } from '../scripts/verify-release';
+import { verifyReleaseMetadata as verifyMetadata } from '../scripts/verify-release';
 
 // These tests deliberately replace private transport state and inject partial
 // protocol doubles. Keep that white-box boundary explicit instead of weakening
@@ -443,6 +443,18 @@ test('release verification rejects mismatched versions, unsafe tags, and missing
   const manifest = { name: 'mcp-mail-server', version: '2.1.0' };
   const lockfile = { ...manifest, packages: { '': manifest } };
   const notes = '# Changelog\n\n## [2.1.0] - 2026-09-27\n';
+  const additional = {
+    readme: '## Release notes\n\n<summary><strong>v2.1.0</strong></summary>\n',
+    chineseReadme: '## 版本说明\n\n<summary><strong>v2.1.0</strong></summary>\n',
+    releaseManifest: { '.': '2.1.0' },
+  };
+  const verifyReleaseMetadata = (
+    tag: string,
+    packageMetadata: typeof manifest & { private?: boolean },
+    lock: typeof lockfile,
+    english: string,
+    chinese: string,
+  ) => verifyMetadata(tag, packageMetadata, lock, english, chinese, additional);
 
   verifyReleaseMetadata('v2.1.0', manifest, lockfile, notes, notes);
   for (const tag of ['main', '2.1.0', 'v02.1.0', 'v2.1.0-beta.1']) {

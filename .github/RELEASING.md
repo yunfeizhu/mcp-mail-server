@@ -1,15 +1,16 @@
 # CI and npm releases
 
-Every branch push and pull request runs the existing quality gate on Node.js 22 and 24: formatting, ESLint, TypeScript, the release bundle, and tests. CI also checks package/lockfile/changelog version consistency and previews the npm package contents.
+Every branch push and pull request runs the existing quality gate on Node.js 22 and 24: formatting, ESLint, TypeScript, the release bundle, and tests. CI also checks the package, lockfile, Release Please manifest, both changelogs, and both README release versions, and previews the npm package contents.
 
-Pushing a stable `vX.Y.Z` tag starts `publish-npm.yml`. The tagged commit must be on `main`; its tag, package version, lockfile versions, and newest English/Chinese changelog entries must agree. The workflow repeats the quality gate, builds a tarball, and uploads it with a checksum. A separate job verifies and publishes that exact tarball using npm OIDC authentication and provenance.
+Merging a Release Please release PR creates a stable `vX.Y.Z` tag and a GitHub Release, then explicitly starts `publish-npm.yml` from that tag. The tagged commit must be on `main`; all release versions must agree. The workflow repeats the quality gate, builds a tarball, and uploads it with a checksum. A separate job verifies and publishes that exact tarball using npm OIDC authentication and provenance. Manually pushed stable tags also start the same publish workflow.
 
 Ordinary code pushes do not publish a package. Existing npm versions cannot be overwritten. Prerelease tags are not supported by this workflow.
 
 ## One-time setup
 
-1. In GitHub **Settings → Environments**, create an environment named `npm`. Under **Deployment branches and tags**, select **Selected branches and tags** and add a **Tag** rule named `v*`. Required reviewers are optional; leaving them unset allows automatic publishing after the tag checks pass.
-2. Open the [npm package settings](https://www.npmjs.com/package/mcp-mail-server/access) as a package owner and add a **Trusted Publisher → GitHub Actions** with these exact fields:
+1. In GitHub **Settings → Actions → General → Workflow permissions**, enable **Allow GitHub Actions to create and approve pull requests**. The release workflow requests its own limited write permissions; the repository default can remain read-only. It does not approve or merge PRs.
+2. In GitHub **Settings → Environments**, create an environment named `npm`. Under **Deployment branches and tags**, select **Selected branches and tags** and add a **Tag** rule named `v*`. Required reviewers are optional; leaving them unset allows automatic publishing after the tag checks pass.
+3. Open the [npm package settings](https://www.npmjs.com/package/mcp-mail-server/access) as a package owner and add a **Trusted Publisher → GitHub Actions** with these exact fields:
 
    | Field                | Value             |
    | -------------------- | ----------------- |
@@ -18,32 +19,22 @@ Ordinary code pushes do not publish a package. Existing npm versions cannot be o
    | Workflow filename    | `publish-npm.yml` |
    | Environment name     | `npm`             |
 
-3. Enable the allowed action for direct **`npm publish`**. New trusted publishers permit staged publishing by default; that alone does not authorize this workflow's direct publish command.
+4. Enable the allowed action for direct **`npm publish`**. New trusted publishers permit staged publishing by default; that alone does not authorize this workflow's direct publish command.
 
 No `NPM_TOKEN` or `NODE_AUTH_TOKEN` secret is needed. The publish job uses GitHub-hosted runners, Node.js 24, and npm 11.17.0. See [npm's trusted publishing documentation](https://docs.npmjs.com/trusted-publishers/) for account configuration and troubleshooting.
 
 ## Prepare a release
 
-Start from an up-to-date `main`. For example, to prepare the next patch after 2.1.0:
+1. Merge ordinary code PRs with [Conventional Commit](https://www.conventionalcommits.org/) messages: `fix:` means a patch, `feat:` a minor release, and `!` or a `BREAKING CHANGE:` footer a major release. Use the same convention for squash-merge titles. Documentation/CI-only commits do not independently require a release.
+2. **Prepare release** creates or refreshes one draft release PR. Release Please updates `package.json`, `package-lock.json`, `CHANGELOG.md`, and `.release-please-manifest.json`. Our trusted `main` script reads that PR as data and synchronizes `CHANGELOG.zh.md`, `README.md`, and `README-zh.md` in an atomic, non-force-pushed documentation commit.
+3. The workflow explicitly dispatches the read-only CI workflow for the release branch, waits for the exact final commit to pass, and only then marks the PR ready for review. Failures and concurrent head changes leave it in draft. Review the version and notes; merge the release PR **when you decide to publish**. Leaving it open does not release anything.
+4. The next `main` run creates the version tag and GitHub Release, verifies the tag's commit, and explicitly dispatches npm publishing from that tag. Watch both **Prepare release** and **Publish to npm** in Actions. Only the publish job has npm OIDC permission.
 
-```bash
-git switch main
-git pull --ff-only
-npm version patch --no-git-tag-version
-```
+GitHub does not reliably start follow-up workflows for pushes made with `GITHUB_TOKEN`; the explicit CI and publish dispatches avoid needing a personal access token. The Chinese files localize category headings, version, and date; commit descriptions are preserved verbatim, not machine-translated. Existing handwritten release history and previous generated entries are retained. README synchronization updates release summaries, not feature documentation or usage examples; update those in the relevant code PR.
 
-Update both changelogs with the new version and release notes; update the README release highlights when appropriate. Runtime and smoke-test versions are read from `package.json`, so they do not require manual edits.
+You do not need to edit versions, assemble release notes, or create tags manually. Runtime and smoke-test versions are read from `package.json`. To refresh a draft after resolving a workflow failure, run **Actions → Prepare release → Run workflow** on `main`, or use `gh workflow run release-please.yml --ref main`.
 
-Commit the release metadata together, then create and push an annotated tag:
-
-```bash
-git add package.json package-lock.json CHANGELOG.md CHANGELOG.zh.md
-git commit -m "chore(release): prepare 2.1.1"
-git tag -a v2.1.1 -m "v2.1.1"
-git push origin main --follow-tags
-```
-
-Replace `2.1.1` with the actual version. If `main` requires pull requests, merge the release metadata through a PR first, then tag the merged commit. In GitHub **Actions → Publish to npm**, watch both jobs complete; only the second job has npm publishing permission.
+The initial manifest starts at the already published `2.1.0`, with a bootstrap commit at its release preparation. This prevents the first automated release from repeating the project's entire history. The previously merged reply-subject fix is therefore eligible for the next patch release; merging this CI setup PR does not itself publish a version.
 
 ## Retry a failed publish
 
