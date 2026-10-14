@@ -42,6 +42,7 @@ import { isPathInsideRoot } from '../src/path-policy';
 import { MailSearchService as TypedMailSearchService } from '../src/search-service';
 import { SMTPClient as TypedSMTPClient } from '../src/smtp-client';
 import { MAIL_TOOLS } from '../src/tool-definitions';
+import { verifyReleaseMetadata as verifyMetadata } from '../scripts/verify-release';
 
 // These tests deliberately replace private transport state and inject partial
 // protocol doubles. Keep that white-box boundary explicit instead of weakening
@@ -436,6 +437,57 @@ test('cleanReplySubject strips ASCII and full-width reply prefixes', () => {
   assert.equal(cleanReplySubject('Report: Q3'), 'Report: Q3');
   assert.equal(cleanReplySubject('Rebuild: Hello'), 'Rebuild: Hello');
   assert.equal(cleanReplySubject(''), '');
+});
+
+test('release verification rejects mismatched versions, unsafe tags, and missing release notes', () => {
+  const manifest = { name: 'mcp-mail-server', version: '2.1.0' };
+  const lockfile = { ...manifest, packages: { '': manifest } };
+  const notes = '# Changelog\n\n## [2.1.0] - 2026-09-27\n';
+  const additional = {
+    readme: '## Release notes\n\n<summary><strong>v2.1.0</strong></summary>\n',
+    chineseReadme: '## 版本说明\n\n<summary><strong>v2.1.0</strong></summary>\n',
+    releaseManifest: { '.': '2.1.0' },
+  };
+  const verifyReleaseMetadata = (
+    tag: string,
+    packageMetadata: typeof manifest & { private?: boolean },
+    lock: typeof lockfile,
+    english: string,
+    chinese: string,
+  ) => verifyMetadata(tag, packageMetadata, lock, english, chinese, additional);
+
+  verifyReleaseMetadata('v2.1.0', manifest, lockfile, notes, notes);
+  for (const tag of ['main', '2.1.0', 'v02.1.0', 'v2.1.0-beta.1']) {
+    assert.throws(() => verifyReleaseMetadata(tag, manifest, lockfile, notes, notes), /stable/);
+  }
+  assert.throws(
+    () => verifyReleaseMetadata('v2.1.1', manifest, lockfile, notes, notes),
+    /tag must match/,
+  );
+  assert.throws(
+    () => verifyReleaseMetadata('v2.1.0', { ...manifest, private: true }, lockfile, notes, notes),
+    /private package/,
+  );
+  assert.throws(
+    () =>
+      verifyReleaseMetadata('v2.1.0', manifest, { ...lockfile, version: '2.0.2' }, notes, notes),
+    /Lockfile version/,
+  );
+  assert.throws(
+    () =>
+      verifyReleaseMetadata(
+        'v2.1.0',
+        manifest,
+        { ...lockfile, packages: { '': { ...manifest, version: '2.0.2' } } },
+        notes,
+        notes,
+      ),
+    /Lockfile root version/,
+  );
+  assert.throws(
+    () => verifyReleaseMetadata('v2.1.0', manifest, lockfile, notes, '## [2.0.2]\n'),
+    /CHANGELOG.zh.md/,
+  );
 });
 
 test('parseMessageRef requires a mailbox-scoped positive UID', () => {
