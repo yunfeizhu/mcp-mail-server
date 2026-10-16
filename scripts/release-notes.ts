@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { format, resolveConfig } from 'prettier';
 
@@ -12,6 +13,106 @@ export interface ReleaseDocuments {
   chineseChangelog: string;
   readme: string;
   chineseReadme: string;
+}
+
+/** Validate the version before using it in a repository-relative localization path. */
+export function chineseReleaseNotesPath(version: string): string {
+  assert.match(
+    version,
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/,
+    'Invalid stable release version',
+  );
+  return `release-notes/${version}.zh.md`;
+}
+
+/** Normalize harmless Markdown bullet/line-ending differences without hiding changed descriptions or links. */
+export function normalizeReleaseBody(body: string): string {
+  return body
+    .replace(/\r\n?/g, '\n')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/^[*+](?= )/gm, '-')
+    .replace(/[ \t]+$/gm, '')
+    .trim();
+}
+
+/** Extract the newest English release and bind translations to its version and complete description. */
+function englishRelease(version: string, changelog: string) {
+  chineseReleaseNotesPath(version);
+  const heading = /^## \[(\d+\.\d+\.\d+)\](?:\([^\n]*\))?[^\n]*(\d{4}-\d{2}-\d{2})[^\n]*$/m.exec(
+    changelog,
+  );
+  assert.ok(
+    heading && heading[1] === version,
+    'English changelog must start with the release version and date',
+  );
+  assert.equal(changelog.search(/^## /m), heading.index, 'Unexpected changelog release heading');
+  const remaining = changelog.slice(heading.index + heading[0].length);
+  const nextHeading = remaining.search(/^## /m);
+  const body = (nextHeading < 0 ? remaining : remaining.slice(0, nextHeading)).trim();
+  assert.ok(body, 'Release notes must not be empty');
+  const fingerprint = createHash('sha256')
+    .update(version + '\n' + normalizeReleaseBody(body))
+    .digest('hex');
+  return { body, date: heading[2], fingerprint };
+}
+
+/** Require Chinese prose in every release-note item, not merely in headings, URLs, or code examples. */
+export function assertChineseReleaseBody(body: string, context: string): void {
+  const prose = body
+    .replace(/^(\x60{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/^#{1,6}[ \t]+.*$/gm, '')
+    .replace(/\x60[^\x60]*\x60/g, '')
+    .replace(/https?:\/\/[^\s)]+/g, '');
+  const items = prose.split(/(?=^[-*] )/m).filter(item => /^[-*] /.test(item));
+  assert.ok(items.length > 0, `${context} must contain Chinese release-note items`);
+  for (const item of items) {
+    assert.match(
+      item,
+      /\p{Script=Han}/u,
+      `${context} contains an untranslated release-note item; translate its prose, not just the heading`,
+    );
+  }
+}
+
+/** Create an editable template; its English items deliberately fail validation until translated. */
+export function createChineseReleaseNotes(
+  version: string,
+  changelog: string,
+  chineseBody?: string,
+): string {
+  const release = englishRelease(version, changelog);
+  const body =
+    chineseBody ??
+    release.body.replace(
+      /^### (.+)$/gm,
+      (_line, title: string) => `### ${chineseHeadings[title] ?? title}`,
+    );
+  return `<!-- release-source-sha256: ${release.fingerprint} -->\n\n${body.trim()}\n`;
+}
+
+/** Read reviewed Chinese prose only when its source fingerprint covers the current English release. */
+export function readChineseReleaseNotes(
+  version: string,
+  changelog: string,
+  source: string | undefined,
+): string {
+  const release = englishRelease(version, changelog);
+  const filename = chineseReleaseNotesPath(version);
+  const expected = `<!-- release-source-sha256: ${release.fingerprint} -->`;
+  assert.ok(
+    typeof source === 'string' && source.trim(),
+    `Missing ${filename}. Add reviewed Chinese notes on main. Expected first line: ${expected}`,
+  );
+  const normalized = source.replace(/\r\n?/g, '\n').trim();
+  const markers = normalized.match(/<!-- release-source-sha256:[^\n]*-->/g) || [];
+  assert.ok(
+    markers.length === 1 && normalized.startsWith(expected + '\n'),
+    `${filename} is stale or has an invalid source marker. Review the latest English notes before updating its first line to: ${expected}`,
+  );
+  const body = normalized.slice(expected.length).trim();
+  assertChineseReleaseBody(body, filename);
+  return body;
 }
 
 function managedRange(contents: string, start: string, end: string): [number, number] | undefined {
@@ -80,44 +181,24 @@ const chineseHeadings: Record<string, string> = {
   'Miscellaneous Chores': '维护',
 };
 
+/** Synchronize both languages from their own reviewed sources without overwriting Chinese prose with English. */
 export async function synchronizeReleaseDocuments(
   version: string,
   documents: ReleaseDocuments,
+  chineseNotes: string | undefined,
 ): Promise<ReleaseDocuments> {
-  assert.match(
-    version,
-    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/,
-    'Invalid stable release version',
-  );
-  const heading = /^## \[(\d+\.\d+\.\d+)\](?:\([^\n]*\))?[^\n]*(\d{4}-\d{2}-\d{2})[^\n]*$/m.exec(
-    documents.changelog,
-  );
-  assert.ok(
-    heading && heading[1] === version,
-    'English changelog must start with the release version and date',
-  );
-  assert.equal(
-    documents.changelog.search(/^## /m),
-    heading.index,
-    'Unexpected changelog release heading',
-  );
-  const remaining = documents.changelog.slice(heading.index + heading[0].length);
-  const nextHeading = remaining.search(/^## /m);
-  const body = (nextHeading < 0 ? remaining : remaining.slice(0, nextHeading)).trim();
-  assert.ok(body, 'Release notes must not be empty');
-  const chineseBody = body.replace(
-    /^### (.+)$/gm,
-    (_line, title: string) => `### ${chineseHeadings[title] ?? title}`,
-  );
+  const { body, date } = englishRelease(version, documents.changelog);
+  const reviewedBody = readChineseReleaseNotes(version, documents.changelog, chineseNotes);
+  const chineseBody = createChineseReleaseNotes(version, documents.changelog, reviewedBody).trim();
   const updated: ReleaseDocuments = {
     changelog: documents.changelog,
     chineseChangelog: updateChineseChangelog(
       documents.chineseChangelog,
       version,
-      `## [${version}] - ${heading[2]}\n\n${chineseBody}`,
+      `## [${version}] - ${date}\n\n${chineseBody}`,
     ),
-    readme: replaceReadmeNotes(documents.readme, version, heading[2], body),
-    chineseReadme: replaceReadmeNotes(documents.chineseReadme, version, heading[2], chineseBody),
+    readme: replaceReadmeNotes(documents.readme, version, date, body),
+    chineseReadme: replaceReadmeNotes(documents.chineseReadme, version, date, chineseBody),
   };
   // Release Please's generated Markdown must satisfy the same formatter as ordinary code PRs.
   const options = await resolveConfig(fileURLToPath(new URL('../README.md', import.meta.url)));

@@ -2,6 +2,13 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  assertChineseReleaseBody,
+  chineseReleaseNotesPath,
+  createChineseReleaseNotes,
+  normalizeReleaseBody,
+  readChineseReleaseNotes,
+} from './release-notes';
 
 interface PackageMetadata {
   name?: string;
@@ -17,8 +24,10 @@ interface AdditionalReleaseMetadata {
   readme: string;
   chineseReadme: string;
   releaseManifest: Record<string, string>;
+  chineseNotes?: string;
 }
 
+/** Verify version consistency, Chinese prose, and the provenance of newly generated localized notes. */
 export function verifyReleaseMetadata(
   tag: string,
   manifest: PackageMetadata,
@@ -67,6 +76,48 @@ export function verifyReleaseMetadata(
       `${filename} must start with the release version`,
     );
   }
+  const chineseHeading = /^##[ \t]+\[[^\]]+\][^\n]*(?:\n|$)/m.exec(chineseChangelog);
+  assert.ok(chineseHeading, 'CHANGELOG.zh.md must contain a release heading');
+  const remainder = chineseChangelog.slice(chineseHeading.index + chineseHeading[0].length);
+  const nextHeading = remainder.search(/^## /m);
+  const changelogBody = (nextHeading < 0 ? remainder : remainder.slice(0, nextHeading)).trim();
+  const readmeBody = additional.chineseReadme.match(
+    /<summary><strong>v\d+\.\d+\.\d+<\/strong>[^\n]*<\/summary>\s*([\s\S]*?)<\/details>/,
+  )?.[1];
+  assert.ok(readmeBody, 'README-zh.md must contain a complete current release summary');
+  for (const [filename, body] of [
+    ['CHANGELOG.zh.md', changelogBody],
+    ['README-zh.md', readmeBody],
+  ]) {
+    assertChineseReleaseBody(body, filename);
+  }
+  assert.equal(
+    normalizeReleaseBody(changelogBody),
+    normalizeReleaseBody(readmeBody),
+    'Chinese changelog and README release descriptions must match',
+  );
+  // Previously published handwritten versions have no source marker. New
+  // generated versions must retain both the reviewed file and its fingerprint.
+  if (
+    additional.chineseNotes !== undefined ||
+    [changelogBody, readmeBody].some(body => body.includes('<!-- release-source-sha256:'))
+  ) {
+    const reviewed = readChineseReleaseNotes(manifest.version!, changelog, additional.chineseNotes);
+    const expectedMarker = createChineseReleaseNotes(manifest.version!, changelog, reviewed).split(
+      '\n',
+    )[0];
+    for (const body of [changelogBody, readmeBody]) {
+      assert.ok(
+        body.split('<!-- release-source-sha256:').length === 2 && body.includes(expectedMarker),
+        'Generated Chinese release source markers must match the reviewed translation',
+      );
+      assert.equal(
+        normalizeReleaseBody(body),
+        normalizeReleaseBody(reviewed),
+        'Generated Chinese descriptions must match the reviewed translation',
+      );
+    }
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -92,11 +143,23 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   );
   const manifest = JSON.parse(manifestText) as PackageMetadata;
   const lockfile = JSON.parse(lockfileText) as LockfileMetadata;
+  let chineseNotes: string | undefined;
+  try {
+    chineseNotes = await readFile(
+      path.join(projectRoot, chineseReleaseNotesPath(manifest.version!)),
+      'utf8',
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error;
+    }
+  }
   const tag = process.argv[2] || `v${manifest.version}`;
   verifyReleaseMetadata(tag, manifest, lockfile, changelog, chineseChangelog, {
     readme,
     chineseReadme,
     releaseManifest: JSON.parse(releaseManifestText) as Record<string, string>,
+    chineseNotes,
   });
   console.log(`Release metadata verified for ${manifest.name}@${manifest.version} (${tag})`);
 }
