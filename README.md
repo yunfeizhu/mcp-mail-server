@@ -455,6 +455,17 @@ Maintainers must enable Actions-created PRs and configure the npm trusted publis
 <!-- release-notes:start -->
 
 <details open>
+<summary><strong>v2.1.2</strong> — 2026-10-16</summary>
+
+### Bug Fixes
+
+- preserve mail identities and bound styled replies ([6b4977d](https://github.com/yunfeizhu/mcp-mail-server/commit/6b4977d6dade728b1ce96a46e0c61d3d5f776d1f))
+
+</details>
+
+<!-- release-notes:end -->
+
+<details>
 <summary><strong>v2.1.1</strong> — 2026-10-14</summary>
 
 ### Bug Fixes
@@ -462,8 +473,6 @@ Maintainers must enable Actions-created PRs and configure the npm trusted publis
 - Fix reply-subject normalization when `Re`, `回复`, or `答复` is followed by a full-width colon (`：`) or whitespace before the colon. Subjects such as `回复：Hello`, `RE : Hello`, and `Re: 回复：RE : Hello` now normalize to `Hello`, preventing stacked reply prefixes and missed matches when looking up sent threads. ([#17](https://github.com/yunfeizhu/mcp-mail-server/pull/17), [#16](https://github.com/yunfeizhu/mcp-mail-server/issues/16))
 
 </details>
-
-<!-- release-notes:end -->
 
 <details>
 <summary><strong>v2.1.0</strong> — batch mailbox maintenance and attachment filename selection</summary>
