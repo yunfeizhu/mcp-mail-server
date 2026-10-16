@@ -406,6 +406,52 @@ test('release verification rejects English residue, inconsistent prose, and stal
   }
 });
 
+for (const [version, requiresReviewedNotes] of [
+  ['0.99.99', false],
+  ['1.99.99', false],
+  ['2.0.99', false],
+  ['2.1.0', false],
+  ['2.1.1', false],
+  ['2.1.2', true],
+  ['2.1.10', true],
+  ['2.2.0', true],
+  ['2.10.0', true],
+  ['3.0.0', true],
+  ['10.0.0', true],
+] as const) {
+  test(`release verification enforces the reviewed-source version boundary for ${version}`, () => {
+    const manifest = { name: 'mcp-mail-server', version };
+    const lockfile = { ...manifest, packages: { '': manifest } };
+    const changelog = `## [${version}] - 2026-10-16\n\n### Bug Fixes\n\n- Fix reply prefixes.\n`;
+    const chineseNotes = createChineseReleaseNotes(version, changelog, chineseBody);
+    const verify = (body: string, source?: string) =>
+      verifyReleaseMetadata(
+        `v${version}`,
+        manifest,
+        lockfile,
+        changelog,
+        `<!-- release-changelog:start -->\n\n## [${version}] - 2026-10-16\n\n${body}\n\n<!-- release-changelog:end -->`,
+        {
+          readme: `## Release notes\n\n<summary><strong>v${version}</strong></summary>`,
+          chineseReadme: `## 版本说明\n\n${readmeStart}\n\n<details open>\n<summary><strong>v${version}</strong> — 2026-10-16</summary>\n\n${body}\n\n</details>\n\n${readmeEnd}`,
+          releaseManifest: { '.': version },
+          chineseNotes: source,
+        },
+      );
+
+    assert.doesNotThrow(() => verify(chineseNotes, chineseNotes));
+    if (requiresReviewedNotes) {
+      assert.throws(() => verify(chineseBody), /Missing release-notes/);
+    } else {
+      // Managed regions alone must not opt historical releases into the new requirement.
+      assert.doesNotThrow(() => verify(chineseBody));
+    }
+    // Opted-in historical releases must still retain both the source and its markers.
+    assert.throws(() => verify(chineseNotes), /Missing release-notes/);
+    assert.throws(() => verify(chineseBody, chineseNotes), /source markers/);
+  });
+}
+
 function releaseApi(
   options: {
     ci?: 'success' | 'failure' | 'missing' | 'wrong-sha';

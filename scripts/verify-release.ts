@@ -96,9 +96,13 @@ export function verifyReleaseMetadata(
     normalizeReleaseBody(readmeBody),
     'Chinese changelog and README release descriptions must match',
   );
-  // Previously published handwritten versions have no source marker. New
-  // generated versions must retain both the reviewed file and its fingerprint.
+  // Releases through 2.1.1 predate reviewed sources. From 2.1.2 onward,
+  // require the source and its fingerprints even when all of them are missing.
+  const [major, minor, patch] = manifest.version!.split('.').map(Number);
+  const requiresReviewedNotes =
+    major > 2 || (major === 2 && (minor > 1 || (minor === 1 && patch >= 2)));
   if (
+    requiresReviewedNotes ||
     additional.chineseNotes !== undefined ||
     [changelogBody, readmeBody].some(body => body.includes('<!-- release-source-sha256:'))
   ) {
