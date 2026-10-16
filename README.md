@@ -13,7 +13,7 @@ Search, read, organize, reply to, and send email through supported password- or 
 
 **English** · [简体中文](README-zh.md)
 
-[Why this server](#why-this-server) · [Quick start](#quick-start) · [Client setup](#client-setup) · [Tools](#tools-at-a-glance) · [Configuration](#configuration) · [Development](#development)
+[Why this server](#why-this-server) · [Quick start](#quick-start) · [Client setup](#client-setup) · [Tools](#tools-at-a-glance) · [Configuration](#configuration) · [Optional security](#optional-security-integration-hol-guard) · [Development](#development)
 
 </div>
 
@@ -349,6 +349,24 @@ Outlook SMTP also uses STARTTLS on port 587, which would require `SMTP_SECURE=fa
 - **Keep certificate verification enabled**: Leave both TLS `REJECT_UNAUTHORIZED` settings at their default `true` unless you control and explicitly trust a private certificate authority
 - **Protect stored credentials**: MCP clients may save `EMAIL_PASS` in their local configuration. Restrict file permissions and never commit credentials to version control
 - **Keep local env files private**: `.env` and `.env.*` are ignored by Git; use a sanitized `.env.example` only when sharing configuration templates
+
+## Optional security integration: HOL Guard
+
+[HOL Guard](https://hol.org/guard) is a separate local security layer for AI agents. Its community [mcp.mail-server extension](https://hol.org/guard/extensions/mcp.mail-server) adds opt-in policy defaults for reviewing permanent email deletion. Guard is not required to run this server, and installing `mcp-mail-server` alone does not activate this coverage.
+
+To use the integration:
+
+1. [Install Guard](https://hol.org/guard/install) and configure its integration for your MCP client or agent. Check the [harness support matrix](https://github.com/hashgraph-online/hol-guard/blob/main/docs/guard/harness-support.md); support and enforcement vary by client and event type.
+2. Use a Guard release whose installed catalog includes `mcp.mail-server`, and have a local administrator explicitly enable this external, opt-in extension through Guard's [local protection controls](https://github.com/hashgraph-online/hol-guard/blob/main/docs/guard/extension-control-center.md). A directory listing, publisher claim, or Cloud setting does not activate it locally.
+3. Route the server's MCP tool calls through the supported Guard-managed proxy or hooks, and verify the effective local policy before relying on it. Calls made directly outside that protected path are not covered.
+
+When the extension is active, its [reviewed policy](https://github.com/hashgraph-online/hol-guard/blob/main/contributions/mcp-servers/mcp.mail-server.json) contributes these defaults:
+
+- `delete_message` and `delete_messages`: `review`, adding a user-approval checkpoint before permanent deletion.
+- `list_mailboxes` and `search_messages`: `allow` only when the reviewed `npx` launcher, STDIO transport, npm registry package selector, and source identity match, without package-manager overrides. A matching package name alone is insufficient.
+- Other tools: `inherit`, retaining host-policy handling rather than automatically allowing all email operations. In particular, `get_message` and `get_messages` are not treated as unconditionally read-only because `markSeen` can change message state.
+
+Local custom grants and stronger Guard constraints retain their precedence. Guard does not make permanent deletion reversible or replace mailbox permissions and backups; this integration is not a security certification. See the [upstream contribution PR](https://github.com/hashgraph-online/hol-guard/pull/3278) for the implementation and regression coverage.
 
 ## Development
 

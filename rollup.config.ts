@@ -1,5 +1,6 @@
 import { builtinModules } from 'node:module';
 
+import { codecovRollupPlugin } from '@codecov/rollup-plugin';
 import resolve from '@rollup/plugin-node-resolve';
 import terser from '@rollup/plugin-terser';
 import type { Plugin, RollupOptions } from 'rollup';
@@ -8,12 +9,14 @@ import ts from 'typescript';
 const NODE_BUILTINS = new Set([...builtinModules, ...builtinModules.map(name => `node:${name}`)]);
 const RUNTIME_PACKAGES = ['@modelcontextprotocol/sdk', 'imap', 'mailparser', 'nodemailer', 'zod'];
 
+/** Keep declared runtime packages external, including their subpath imports. */
 function isRuntimePackage(id: string): boolean {
   return RUNTIME_PACKAGES.some(
     packageName => id === packageName || id.startsWith(`${packageName}/`),
   );
 }
 
+/** Transpile project sources without bundling TypeScript or changing runtime dependencies. */
 function transpileTypeScript(): Plugin {
   return {
     name: 'transpile-typescript',
@@ -50,9 +53,11 @@ function transpileTypeScript(): Plugin {
 
 interface BuildOptions {
   minify?: boolean;
+  bundleAnalysis?: boolean;
 }
 
-export function createRollupConfig({ minify = false }: BuildOptions = {}) {
+/** Create the release build; optional Codecov analysis only emits offline statistics. */
+export function createRollupConfig({ minify = false, bundleAnalysis = false }: BuildOptions = {}) {
   return {
     input: 'src/index.ts',
     output: {
@@ -69,10 +74,25 @@ export function createRollupConfig({ minify = false }: BuildOptions = {}) {
       }),
       transpileTypeScript(),
       ...(minify ? [terser()] : []),
+      ...(bundleAnalysis
+        ? [
+            codecovRollupPlugin({
+              enableBundleAnalysis: true,
+              bundleName: 'mcp-mail-server',
+              gitService: 'github',
+              telemetry: false,
+              // Upload separately with strict error handling and event-scoped authentication.
+              dryRun: true,
+            }),
+          ]
+        : []),
     ],
   } satisfies RollupOptions;
 }
 
-const config = createRollupConfig({ minify: true });
+const config = createRollupConfig({
+  minify: true,
+  bundleAnalysis: process.env.CODECOV_BUNDLE_ANALYSIS === 'true',
+});
 
 export default config;

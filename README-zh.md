@@ -13,7 +13,7 @@
 
 [English](README.md) · **简体中文**
 
-[为什么选择它？](#为什么选择它) · [快速开始](#快速开始) · [客户端配置](#客户端配置) · [工具能力](#工具能力一览) · [配置](#配置) · [开发](#开发)
+[为什么选择它？](#为什么选择它) · [快速开始](#快速开始) · [客户端配置](#客户端配置) · [工具能力](#工具能力一览) · [配置](#配置) · [可选安全集成](#可选安全集成hol-guard) · [开发](#开发)
 
 </div>
 
@@ -349,6 +349,24 @@ Outlook SMTP 的 587 端口还要求使用 STARTTLS，对应 `SMTP_SECURE=false`
 - **保持证书校验开启**：除非使用自己控制并明确可信的私有 CA，否则不要关闭两个 TLS `REJECT_UNAUTHORIZED` 配置
 - **保护本地凭据**：MCP 客户端可能把 `EMAIL_PASS` 保存在本地配置文件中，请限制文件权限，并且绝不要把包含凭据的配置提交到版本控制
 - **保护本地环境文件**：Git 已忽略 `.env` 和 `.env.*`；共享配置模板时只使用已脱敏的 `.env.example`
+
+## 可选安全集成：HOL Guard
+
+[HOL Guard](https://hol.org/guard) 是独立的 AI 智能体本地安全层，其社区 [mcp.mail-server 扩展](https://hol.org/guard/extensions/mcp.mail-server) 为永久删除邮件提供可选的审批策略。本服务不强制依赖 Guard，仅安装 `mcp-mail-server` 不会自动启用这项保护。
+
+启用条件：
+
+1. [安装 Guard](https://hol.org/guard/install)，并为所用 MCP 客户端或智能体配置 Guard 集成。先查看[客户端支持矩阵](https://github.com/hashgraph-online/hol-guard/blob/main/docs/guard/harness-support.md)，不同客户端和事件的支持与拦截能力不同。
+2. 所安装的 Guard 版本及本地目录需包含 `mcp.mail-server`，并由本地管理员通过 Guard 的[本地保护控制台](https://github.com/hashgraph-online/hol-guard/blob/main/docs/guard/extension-control-center.md)明确启用这个 `external`、`opt-in` 扩展。目录收录、发布者认领或云端设置都不等于已在本机启用。
+3. 邮件服务的 MCP 工具调用必须经过受支持的 Guard 托管代理或 hooks，并在使用前核对本地实际生效的策略；绕过这条受保护路径的直接调用不在覆盖范围内。
+
+扩展启用后，[上游覆盖规则](https://github.com/hashgraph-online/hol-guard/blob/main/contributions/mcp-servers/mcp.mail-server.json) 提供以下默认策略：
+
+- `delete_message`、`delete_messages`：`review`，在永久删除前增加用户审批检查点。
+- `list_mailboxes`、`search_messages`：只有匹配已审核的 `npx` 启动器、STDIO 传输、npm registry 包选择器及来源身份，且没有包管理器覆盖配置时，才可获得 `allow` 默认放行；仅包名相同并不足够。
+- 其余工具：`inherit`，沿用宿主策略，并非自动放行所有邮件操作。尤其是 `get_message`、`get_messages` 的 `markSeen` 可以改变已读状态，因此不能一概视为只读。
+
+本地自定义授权与更严格的 Guard 约束仍按既有优先级生效。Guard 不会让永久删除变得可撤销，也不能代替邮箱权限管理与备份；该集成不等于安全认证。实现及回归测试见[上游贡献 PR](https://github.com/hashgraph-online/hol-guard/pull/3278)。
 
 ## 开发
 

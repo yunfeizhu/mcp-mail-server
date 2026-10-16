@@ -6,6 +6,30 @@
 
 普通代码推送只验证，不发布。npm 既有版本不可覆盖；此流程暂不支持预发布标签。
 
+## PR 预览与评审机器人
+
+这些集成与正式 npm 发版相互独立：
+
+| 集成                                                                        | 用途                                                          | 配置                                                                                                      |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| [pkg.pr.new](https://github.com/stackblitz-labs/pkg.pr.new)                 | 生成预览包，在同一条 PR 评论中更新绑定提交的 `npx` 试用命令。 | `preview-package.yml`；为本仓库安装 [GitHub App](https://github.com/apps/pkg-pr-new)。                    |
+| [CodeRabbit](https://docs.coderabbit.ai/reference/configuration)            | 自动用中文评审 PR，跳过草稿。                                 | `.coderabbit.yaml`；安装 [GitHub App](https://github.com/apps/coderabbitai)。未启用自动批准、修复或合并。 |
+| GitHub Actions 体积评论                                                     | 对比单一压缩构建入口 `dist/index.js` 的原始大小和 gzip 大小。 | `bundle-analysis.yml`、`bundle-comment.yml` 和 `scripts/bundle-size.ts`。                                 |
+| [Codecov Bundle Analysis](https://docs.codecov.com/docs/rollup-quick-start) | 展示模块/产物体积分布、看板和 PR 包体积报告，不是测试覆盖率。 | `codecov.yml`、显式启用的 Rollup 插件及 [GitHub App](https://github.com/apps/codecov)。                   |
+
+预览和体积工作流仅在 `yunfeizhu/mcp-mail-server` 中运行，触发条件为 `main` 推送或面向 `main` 的非草稿 PR。预览先执行质量检查，使用独立的 `0.0.0-preview-<sha>` 版本，上传至 **pkg.pr.new，而非 npm**；不修改仓库版本，也不创建正式版本。预览链接是尚未评审的开发构建，请使用测试邮箱，不要提供生产凭据。CodeRabbit 的功能与额度取决于账号方案；这些配置不会购买订阅。
+
+Codecov 按事件区分认证方式，不保存 `CODECOV_TOKEN`，也不使用 npm 凭据：
+
+- 公开仓库 PR 使用官方支持的[临时免 Token 分支标识](https://docs.codecov.com/docs/codecov-tokens#commits-on-unprotected-branches)：`pr<PR 编号>:<head 分支>`，同时明确传递 head 提交和 PR 编号。它只改变 Codecov 元数据，不创建或修改 GitHub 分支。PR 构建不提供 secret 或 OIDC 权限，账号级 Token 校验保持开启。
+- `bundle-baseline.yml` 仅在可信 `main` 推送时运行，使用官方 SDK 的 GitHub OIDC 认证。只有这个基线任务申请 `id-token: write`，不允许从 PR 或任意分支手动触发。npm 发布流程不变。
+
+`CODECOV_BUNDLE_ANALYSIS=true` 只让官方 Rollup 插件输出离线分析文件，随后由专用工作流执行 `npm run bundle:upload`。`scripts/upload-codecov.ts` 验证事件身份，并开启 SDK 的严格错误传递；申请上传地址或上传报告失败时，该分析任务会明确失败，不再静默忽略。普通本地构建、测试和正式 npm 发布都不会上传分析，插件遥测已关闭。完成账号/仓库引导后，在[体积看板](https://app.codecov.io/github/yunfeizhu/mcp-mail-server/bundles)核对接收结果。首次 `main` OIDC 基线上传及默认分支评论工作流，需要配置合并后才能实测验收。
+
+两种体积报告都只测量已打包的 CLI 代码，**不包含外部运行时依赖**，不代表安装总大小、npm tarball 下载大小或运行性能。Codecov 采用信息提示模式和 5% 警告阈值，不新增必须通过的门禁。Actions 评论在 Node.js 24 上分别使用 PR head/base 精确提交及各自 lockfile 构建，gzip 使用级别 9。
+
+PR 构建只有只读令牌，不提供仓库 secret。独立的 `workflow_run` 评论任务只执行可信 `main` 代码，将有大小限制的 JSON 报告与源工作流、当前打开的 PR 逐项核对，并只更新自己的标记评论；不会带着写权限执行下载文件或 PR 代码。过期结果会跳过，下次推送 PR 时刷新。Fork 的运行可能需要 GitHub 常规的维护者批准。评论工作流必须先进入 `main`，才能接收运行完成事件；配置合并后，用新 PR/新提交验收四项集成。机器人不替代原有 CI 或维护者的合并决定。
+
 ## 一次性配置
 
 1. 在 GitHub **Settings → Actions → General → Workflow permissions** 启用 **Allow GitHub Actions to create and approve pull requests**。发布任务单独申请所需写权限，仓库默认权限可以保持只读。流水线不会自动批准或合并 PR。

@@ -1,0 +1,4 @@
+# These are bundle-size reports, not test-coverage reports.
+bundle_analysis:
+  warning_threshold: '5%'
+  status: informational

@@ -1,0 +1,71 @@
+name: Bundle size comment
+
+on:
+  workflow_run:
+    workflows: [Bundle analysis]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bundle-comment-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  comment:
+    if: >-
+      github.repository == 'yunfeizhu/mcp-mail-server' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      # Never check out a PR ref, restore its cache, install its dependencies, or execute its files here.
+      - name: Check out the trusted reporter
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Validate the source workflow and locate its small data artifact
+        id: artifact
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const { getBundleRun } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/bundle-size.ts`);
+            const api = async (route, method = 'GET', body) => (await github.request(`${method} ${route}`, body)).data;
+            const runId = context.payload.workflow_run.id;
+            const run = await getBundleRun(api, runId);
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              ...context.repo, run_id: runId, per_page: 100,
+            });
+            const reports = artifacts.filter(artifact => artifact.name === `bundle-size-report-${run.run_attempt}` && !artifact.expired);
+            if (reports.length !== 1 || reports[0].size_in_bytes > 16384) {
+              throw new Error('Expected one small bundle report artifact');
+            }
+            core.setOutput('id', reports[0].id);
+      - name: Download only the validated artifact from this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ steps.artifact.outputs.id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/bundle-report
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Validate data and update the PR comment
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const fs = await import('node:fs/promises');
+            const { publishBundleReport } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/bundle-size.ts`);
+            const filename = `${process.env.RUNNER_TEMP}/bundle-report/report.json`;
+            const info = await fs.lstat(filename);
+            if (!info.isFile() || info.size > 8192) throw new Error('Invalid bundle report file');
+            const report = JSON.parse(await fs.readFile(filename, 'utf8'));
+            const api = async (route, method = 'GET', body) => (await github.request(`${method} ${route}`, body)).data;
+            const result = await publishBundleReport(api, context.payload.workflow_run.id, report);
+            core.info(result);
