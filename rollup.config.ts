@@ -1,5 +1,6 @@
 import { builtinModules } from 'node:module';
 
+import { codecovRollupPlugin } from '@codecov/rollup-plugin';
 import resolve from '@rollup/plugin-node-resolve';
 import terser from '@rollup/plugin-terser';
 import type { Plugin, RollupOptions } from 'rollup';
@@ -50,9 +51,15 @@ function transpileTypeScript(): Plugin {
 
 interface BuildOptions {
   minify?: boolean;
+  bundleAnalysis?: boolean;
+  analysisDryRun?: boolean;
 }
 
-export function createRollupConfig({ minify = false }: BuildOptions = {}) {
+export function createRollupConfig({
+  minify = false,
+  bundleAnalysis = false,
+  analysisDryRun = false,
+}: BuildOptions = {}) {
   return {
     input: 'src/index.ts',
     output: {
@@ -69,10 +76,30 @@ export function createRollupConfig({ minify = false }: BuildOptions = {}) {
       }),
       transpileTypeScript(),
       ...(minify ? [terser()] : []),
+      ...(bundleAnalysis
+        ? [
+            codecovRollupPlugin({
+              enableBundleAnalysis: true,
+              bundleName: 'mcp-mail-server',
+              gitService: 'github',
+              telemetry: false,
+              dryRun: analysisDryRun,
+              uploadOverrides: {
+                sha: process.env.CODECOV_COMMIT_SHA || undefined,
+                compareSha: process.env.CODECOV_BASE_SHA || undefined,
+                pr: process.env.CODECOV_PR_NUMBER || undefined,
+              },
+            }),
+          ]
+        : []),
     ],
   } satisfies RollupOptions;
 }
 
-const config = createRollupConfig({ minify: true });
+const config = createRollupConfig({
+  minify: true,
+  bundleAnalysis: process.env.CODECOV_BUNDLE_ANALYSIS === 'true',
+  analysisDryRun: process.env.CODECOV_BUNDLE_DRY_RUN === 'true',
+});
 
 export default config;

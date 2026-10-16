@@ -63,6 +63,7 @@ await run(
     tsxCli,
     '--test',
     path.join(projectRoot, 'test', 'core.test.ts'),
+    path.join(projectRoot, 'test', 'bundle-size.test.ts'),
     path.join(projectRoot, 'test', 'release.test.ts'),
     path.join(projectRoot, 'test', 'server-smoke.test.ts'),
   ],

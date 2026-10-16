@@ -6,6 +6,25 @@ Merging a Release Please release PR creates a stable `vX.Y.Z` tag and a GitHub R
 
 Ordinary code pushes do not publish a package. Existing npm versions cannot be overwritten. Prerelease tags are not supported by this workflow.
 
+## PR previews and review bots
+
+These integrations are independent of stable npm publishing:
+
+| Integration                                                                 | Purpose                                                                                  | Configuration                                                                                                                            |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| [pkg.pr.new](https://github.com/stackblitz-labs/pkg.pr.new)                 | A preview package and one updated PR comment with an `npx` command pinned to the commit. | `preview-package.yml`; install the [GitHub App](https://github.com/apps/pkg-pr-new) for this repository.                                 |
+| [CodeRabbit](https://docs.coderabbit.ai/reference/configuration)            | Automatic Chinese-language PR reviews; draft PRs are skipped.                            | `.coderabbit.yaml`; install the [GitHub App](https://github.com/apps/coderabbitai). No automatic approval, fixes, or merging is enabled. |
+| GitHub Actions bundle-size comment                                          | Before/after raw and gzip sizes for the single minified `dist/index.js` entry.           | `bundle-analysis.yml`, `bundle-comment.yml`, and `scripts/bundle-size.ts`.                                                               |
+| [Codecov Bundle Analysis](https://docs.codecov.com/docs/rollup-quick-start) | Module/asset breakdowns, a dashboard, and PR bundle reports. This is not test coverage.  | `codecov.yml`, the opt-in Rollup plugin, and the [GitHub App](https://github.com/apps/codecov).                                          |
+
+Preview and bundle workflows run for `main` pushes and non-draft PRs targeting `main`, only in `yunfeizhu/mcp-mail-server`. Previews run the quality gate first, use a distinct `0.0.0-preview-<sha>` version, and are uploaded to **pkg.pr.new, not npm**. They do not change repository versions or create stable releases. Preview URLs are unreviewed development builds: use a test mailbox, not production credentials. CodeRabbit availability and limits depend on the account's plan; these files do not purchase a subscription.
+
+Codecov uses the official plugin's **public-repository tokenless uploads** (`gitService: github`), not a repository token or npm credentials. Complete its account/repository onboarding and check the first upload in the [bundle dashboard](https://app.codecov.io/github/yunfeizhu/mcp-mail-server/bundles). No `CODECOV_TOKEN`, `NPM_TOKEN`, or additional GitHub OIDC permission is required. Analysis is enabled only by `CODECOV_BUNDLE_ANALYSIS=true` in the dedicated workflow; normal local builds, tests, and stable npm publication do not upload analysis. Plugin telemetry is disabled. A successful build alone is not proof that the external service accepted an upload.
+
+Both size reports measure the bundled CLI code, **excluding external runtime dependencies**. They are not total installation size, download size of the npm tarball, or runtime-performance results. Codecov reports are informational with a 5% warning threshold, not new required checks. The Actions comment compares exact PR head/base commits, each built on Node.js 24 with its own lockfile, and uses gzip level 9.
+
+PR builds have a read-only token and no repository secrets. The separate `workflow_run` reporter uses only trusted `main` code, validates a bounded JSON artifact against the source run and current open PR, and updates only its own marked comment. It never executes downloaded files or PR code with write permissions. Stale results are skipped; a new PR push refreshes them. Fork runs may need GitHub's normal maintainer approval. The comment workflow must exist on `main` before it can respond to completed runs; after the setup is merged, validate all four integrations with a new PR/update. Bots do not replace the existing CI quality gate or the maintainer's merge decision.
+
 ## One-time setup
 
 1. In GitHub **Settings → Actions → General → Workflow permissions**, enable **Allow GitHub Actions to create and approve pull requests**. The release workflow requests its own limited write permissions; the repository default can remain read-only. It does not approve or merge PRs.
