@@ -56,7 +56,10 @@ function englishRelease(version: string, changelog: string) {
   return { body, date: heading[2], fingerprint };
 }
 
-/** Require Chinese prose in every release-note item, not merely in headings, URLs, or code examples. */
+/**
+ * Apply a basic Han-character presence check after stripping common Markdown non-prose content.
+ * This does not identify languages or assess translation quality; maintainers must review both.
+ */
 export function assertChineseReleaseBody(body: string, context: string): void {
   const prose = body
     .replace(/^(\x60{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, '')
@@ -75,7 +78,7 @@ export function assertChineseReleaseBody(body: string, context: string): void {
   }
 }
 
-/** Create an editable template; its English items deliberately fail validation until translated. */
+/** Create an editable template; maintainers must translate and review its English descriptions. */
 export function createChineseReleaseNotes(
   version: string,
   changelog: string,

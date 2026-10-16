@@ -10,6 +10,7 @@ import {
   type GitHubRequest,
 } from '../scripts/complete-release';
 import {
+  assertChineseReleaseBody,
   chineseReleaseNotesPath,
   createChineseReleaseNotes,
   readChineseReleaseNotes,
@@ -251,6 +252,24 @@ for (const source of [undefined, '', ' \n ']) {
       );
     },
   );
+}
+
+for (const [name, body, passes] of [
+  ['Chinese prose', '- 修复邮件回复主题。', true],
+  ['Japanese with Kanji', '- 返信の件名を修正しました。', true],
+  ['English with one Han character', '- Fix reply prefixes 中.', true],
+  ['English without Han characters', '- Fix reply prefixes.', false],
+  ['Japanese without Han characters', '- メールのタイトルをなおしました。', false],
+  ['Han only in a fenced code block', '- Fix reply prefixes.\n\n```text\n中文\n```', false],
+  ['Han in another list item', '- 修复第一项。\n- Fix reply prefixes.', false],
+] as const) {
+  test(`release-note Han presence screening is not language identification: ${name}`, () => {
+    if (passes) {
+      assert.doesNotThrow(() => assertChineseReleaseBody(body, name));
+    } else {
+      assert.throws(() => assertChineseReleaseBody(body, name), /untranslated/);
+    }
+  });
 }
 
 for (const body of [
