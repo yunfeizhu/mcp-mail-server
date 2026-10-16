@@ -12,6 +12,7 @@ import {
   type SearchResult,
 } from './mail-types';
 import { cleanReplySubject } from './mail-utils';
+import { parseMailboxName } from './message-ref';
 
 interface MailSearchServiceDependencies {
   ensureIMAPConnection: () => Promise<void>;
@@ -37,6 +38,7 @@ interface CollectedSearch {
 
 interface CollectOptions {
   candidateBudget?: SearchCandidateBudget;
+  criteria?: any[];
 }
 
 interface SearchCandidateBudget {
@@ -146,6 +148,7 @@ export class MailSearchService {
     }
   }
 
+  /** Classify replies using exact thread identities, never the relative IMAP storage dates. */
   async findUnrepliedMessages(args: FindUnrepliedMessagesArgs): Promise<SearchResponse> {
     try {
       const sender = this.requireString(args.sender, 'sender');
@@ -199,26 +202,21 @@ export class MailSearchService {
         );
       }
 
-      const earliestCandidate = candidates.reduce(
-        (earliest, message) => Math.min(earliest, this.messageTimestamp(message)),
-        Number.POSITIVE_INFINITY,
-      );
-      const sentQuery = this.normalizeSearchArgs(
-        {
-          mailboxes: [sentMailbox],
-          since: Number.isFinite(earliestCandidate)
-            ? new Date(earliestCandidate).toISOString()
-            : args.since,
-          includeBody: false,
-          limit: 200,
-        },
-        200,
-        false,
-      );
-      const sent = await this.collectMessages(sentQuery, {
-        candidateBudget,
-      });
-      const replyTimestamps = this.collectReplyTimestamps(sent.messages);
+      let replyReferences = new Set<string>();
+      if (candidates.some(message => this.normalizeMessageId(message.messageId))) {
+        // INTERNALDATE is an arrival/import timestamp, not proof of thread order.
+        // Search every message that has either thread header, within the shared
+        // candidate/byte budgets. Empty HEADER values mean "header exists".
+        // Searching raw ID substrings would miss equivalent quoted/escaped IDs.
+        const sent = await this.collectMessages(
+          { mailboxes: [sentMailbox], includeBody: false },
+          {
+            candidateBudget,
+            criteria: [['OR', ['HEADER', 'IN-REPLY-TO', ''], ['HEADER', 'REFERENCES', '']]],
+          },
+        );
+        replyReferences = this.collectReplyReferences(sent.messages);
+      }
       const replied: ExtendedEmailMessage[] = [];
       const unreplied: ExtendedEmailMessage[] = [];
       const unknown: ExtendedEmailMessage[] = [];
@@ -227,10 +225,7 @@ export class MailSearchService {
         const messageId = this.normalizeMessageId(message.messageId);
         if (!messageId) {
           unknown.push(message);
-        } else if (
-          (replyTimestamps.get(messageId) ?? Number.NEGATIVE_INFINITY) >
-          this.messageTimestamp(message)
-        ) {
+        } else if (replyReferences.has(messageId)) {
           replied.push(message);
         } else {
           unreplied.push(message);
@@ -261,13 +256,14 @@ export class MailSearchService {
     }
   }
 
+  /** Collect all bounded matching headers, optionally using trusted internal criteria. */
   private async collectMessages(
     args: SearchMessagesArgs,
     options: CollectOptions = {},
   ): Promise<CollectedSearch> {
     const imapClient = this.dependencies.getIMAPClient();
     const mailboxes = args.mailboxes || (await this.defaultMailboxes());
-    const criteria = this.buildCriteria(args);
+    const criteria = options.criteria ?? this.buildCriteria(args);
     const exactRange = this.parseExactDateRange(args.since, args.before);
     const candidateBudget = options.candidateBudget ?? this.createCandidateBudget();
     const messages: ExtendedEmailMessage[] = [];
@@ -577,31 +573,36 @@ export class MailSearchService {
     return `${mailbox}\u0000${uid}`;
   }
 
-  private collectReplyTimestamps(messages: ExtendedEmailMessage[]): Map<string, number> {
-    const referenced = new Map<string, number>();
+  /** Collect canonical thread references even when a sent message has no usable storage date. */
+  private collectReplyReferences(messages: ExtendedEmailMessage[]): Set<string> {
+    const referenced = new Set<string>();
     for (const message of messages) {
-      const timestamp = this.messageTimestamp(message);
-      if (!Number.isFinite(timestamp)) continue;
       const values = [message.inReplyTo, ...(message.references || [])];
       for (const value of values) {
         const normalized = this.normalizeMessageId(value);
         if (normalized) {
-          referenced.set(
-            normalized,
-            Math.max(referenced.get(normalized) ?? Number.NEGATIVE_INFINITY, timestamp),
-          );
+          referenced.add(normalized);
         }
       }
     }
     return referenced;
   }
 
+  /** Normalize RFC 5256 quoted id-left syntax while retaining case-sensitive Message-ID identity. */
   private normalizeMessageId(value?: string): string | null {
     if (!value) return null;
-    const normalized = value.trim().replace(/^<|>$/g, '').toLowerCase();
+    let normalized = value.trim();
+    if (normalized.startsWith('<') && normalized.endsWith('>')) {
+      normalized = normalized.slice(1, -1);
+    }
+    normalized = normalized.replace(
+      /^"((?:[^"\\]|\\.)*)"(@.+)$/,
+      (_match, local: string, domain: string) => local.replace(/\\(.)/g, '$1') + domain,
+    );
     return normalized || null;
   }
 
+  /** Preserve opaque mailbox names; only INBOX has protocol-defined case-insensitive identity. */
   private normalizeMailboxes(value: string[] | undefined, fallback?: string[]): string[] {
     const mailboxes = value ?? fallback;
     if (!Array.isArray(mailboxes) || mailboxes.length === 0) {
@@ -609,7 +610,7 @@ export class MailSearchService {
     }
     if (mailboxes.length > 20) throw new Error('mailboxes cannot contain more than 20 entries');
     const normalized = mailboxes.map((mailbox, index) =>
-      this.requireString(mailbox, `mailboxes[${index}]`),
+      parseMailboxName(mailbox, `mailboxes[${index}]`),
     );
     return [
       ...new Map(

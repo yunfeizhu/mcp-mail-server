@@ -8,19 +8,25 @@ export interface MoveMessageRef extends MessageRef {
   targetMailbox: string;
 }
 
+/** Validate an opaque IMAP mailbox name without changing significant whitespace. */
+export function parseMailboxName(value: unknown, name: string = 'mailbox'): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${name} must be a non-empty string`);
+  }
+  return value;
+}
+
+/** Validate a mailbox-local UID and optional UIDVALIDITY without rewriting its mailbox. */
 export function parseMessageRef(value: unknown, uidField: string = 'uid'): MessageRef {
   if (!value || typeof value !== 'object') {
     throw new Error('message reference must be an object');
   }
 
   const input = value as Record<string, unknown>;
-  const mailbox = typeof input.mailbox === 'string' ? input.mailbox.trim() : '';
+  const mailbox = parseMailboxName(input.mailbox);
   const uid = input[uidField];
   const uidValidity = input.uidValidity;
 
-  if (!mailbox) {
-    throw new Error('mailbox must be a non-empty string');
-  }
   if (!Number.isInteger(uid) || (uid as number) <= 0) {
     throw new Error(`${uidField} must be a positive integer`);
   }
@@ -38,14 +44,11 @@ export function parseMessageRef(value: unknown, uidField: string = 'uid'): Messa
   };
 }
 
+/** Validate exact source/destination names, treating only INBOX as case-insensitive. */
 export function parseMoveMessageRef(value: unknown): MoveMessageRef {
   const ref = parseMessageRef(value);
   const input = value as Record<string, unknown>;
-  const targetMailbox = typeof input.targetMailbox === 'string' ? input.targetMailbox.trim() : '';
-
-  if (!targetMailbox) {
-    throw new Error('targetMailbox must be a non-empty string');
-  }
+  const targetMailbox = parseMailboxName(input.targetMailbox, 'targetMailbox');
 
   const bothInbox =
     ref.mailbox.toUpperCase() === 'INBOX' && targetMailbox.toUpperCase() === 'INBOX';

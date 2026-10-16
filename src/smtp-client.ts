@@ -83,16 +83,23 @@ export class SMTPClient {
     }
   }
 
+  /** Keep standalone quoted addr-specs structured so SMTP envelope parsing cannot unquote them. */
+  private prepareAddressList(value: string | string[] | undefined): SendMailOptions['to'] {
+    if (value === undefined) {
+      return undefined;
+    }
+    return (Array.isArray(value) ? value : [value]).map(address =>
+      /^"(?:[^"\\]|\\.)*"@[^\s<>@]+$/.test(address) ? { name: '', address } : address,
+    );
+  }
+
+  /** Reuse identical address and MIME options for actual delivery and the saved Sent copy. */
   private createMailOptions(options: EmailOptions): SendMailOptions {
     return {
       from: options.from || this.config.fromAddress || this.config.username,
-      to: Array.isArray(options.to) ? options.to.join(', ') : options.to,
-      cc: options.cc ? (Array.isArray(options.cc) ? options.cc.join(', ') : options.cc) : undefined,
-      bcc: options.bcc
-        ? Array.isArray(options.bcc)
-          ? options.bcc.join(', ')
-          : options.bcc
-        : undefined,
+      to: this.prepareAddressList(options.to),
+      cc: this.prepareAddressList(options.cc),
+      bcc: this.prepareAddressList(options.bcc),
       subject: options.subject,
       text: options.text,
       html: options.html,
