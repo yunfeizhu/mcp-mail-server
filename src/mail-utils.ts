@@ -1,3 +1,4 @@
+import addressparser from 'nodemailer/lib/addressparser/index.js';
 import type { EmailSignature } from './mail-types';
 
 export interface MailContent {
@@ -42,9 +43,45 @@ export function extractEmailFromAddress(addressField: any): string | null {
   return extractEmailsFromAddressField(addressField)[0] || null;
 }
 
+/** Serialize an addr-spec without losing special characters when it is parsed again for SMTP. */
+function serializeAddress(address: string): string | null {
+  const value = address.trim();
+  const at = value.lastIndexOf('@');
+  if (at < 1 || at === value.length - 1 || /[\r\n\0]/.test(value)) {
+    return null;
+  }
+  let local = value.slice(0, at);
+  const domain = value.slice(at + 1);
+  if (/[\s<>,"\\]/.test(domain)) {
+    return null;
+  }
+  if (/^"(?:[^"\\]|\\.)*"$/.test(local)) {
+    local = local.slice(1, -1).replace(/\\(.)/g, '$1');
+  }
+  // The parser may return a decoded quoted local-part. Re-quote it before
+  // joining addresses into headers, otherwise commas become recipient separators.
+  if (
+    /[\s()<>[\]:;@\\,"]/.test(local) ||
+    local.startsWith('.') ||
+    local.endsWith('.') ||
+    local.includes('..') ||
+    !local
+  ) {
+    local = '"' + local.replace(/["\\]/g, '\\$&') + '"';
+  }
+  return local + '@' + domain;
+}
+
+/** Flatten parsed MIME address objects or RFC address-list strings into safe addr-specs. */
 export function extractEmailsFromAddressField(addressField: any): string[] {
   if (!addressField) return [];
   const collected: string[] = [];
+  const collect = (address: string): void => {
+    const serialized = serializeAddress(address);
+    if (serialized) {
+      collected.push(serialized);
+    }
+  };
   const visit = (value: any): void => {
     if (!value) return;
     if (Array.isArray(value)) {
@@ -52,16 +89,13 @@ export function extractEmailsFromAddressField(addressField: any): string[] {
       return;
     }
     if (typeof value === 'string') {
-      const matches = value.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g);
-      if (matches) {
-        collected.push(...matches);
-      } else if (value.trim()) {
-        collected.push(value.trim());
+      for (const parsed of addressparser(value, { flatten: true })) {
+        collect(parsed.address);
       }
       return;
     }
     if (typeof value === 'object') {
-      if (typeof value.address === 'string') visit(value.address);
+      if (typeof value.address === 'string') collect(value.address);
       if (Array.isArray(value.value)) visit(value.value);
       if (Array.isArray(value.group)) visit(value.group);
       if (!value.address && !value.value && !value.group && typeof value.text === 'string')
@@ -218,6 +252,7 @@ export function appendSignature(
   return { text: finalText, html: finalHtml };
 }
 
+/** Append bounded quotes, measuring HTML only after its final styling has been applied. */
 export function appendQuotedOriginal(
   content: MailContent,
   originalText: string | undefined,
@@ -225,6 +260,7 @@ export function appendQuotedOriginal(
   date: string,
   from: string,
   maxCharacters?: number,
+  finalizeHtml: (html: string) => string = html => html,
 ): MailContent {
   const originalPlainText =
     originalText && originalText.trim() ? originalText : htmlToPlainText(originalHtml || '');
@@ -247,20 +283,23 @@ export function appendQuotedOriginal(
           originalPlainText,
           value => buildQuotedHtml(value, date, from),
           maxCharacters,
+          finalizeHtml,
         )
       : undefined;
 
   return { text: finalText, html: finalHtml };
 }
 
+/** Fit an optional original-message quote without truncating the newly authored content. */
 function composeQuotedAlternative(
   newContent: string,
   separator: string,
   originalContent: string,
   renderQuote: (value: string) => string,
   maxCharacters?: number,
+  finalize: (content: string) => string = content => content,
 ): string {
-  const compose = (value: string) => `${newContent}${separator}${renderQuote(value)}`;
+  const compose = (value: string) => finalize(`${newContent}${separator}${renderQuote(value)}`);
   const complete = compose(originalContent);
   if (maxCharacters === undefined || complete.length <= maxCharacters) return complete;
 
@@ -287,5 +326,5 @@ function composeQuotedAlternative(
   // The new reply and signature were validated separately. If even the quote
   // header plus truncation marker cannot fit, preserve the new content rather
   // than failing an otherwise valid reply.
-  return best ?? newContent;
+  return best ?? finalize(newContent);
 }

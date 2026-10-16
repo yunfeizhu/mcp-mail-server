@@ -1003,6 +1003,7 @@ export class MailMCPServer {
     }
   }
 
+  /** Send a threaded reply, keeping authored content intact while bounding the final styled quote. */
   private async handleReplyToEmail(args: ReplyToEmailArgs): Promise<CallToolResult> {
     const originalRef = parseMessageRef(args, 'originalUid');
     const originalUid = originalRef.uid;
@@ -1040,9 +1041,9 @@ export class MailMCPServer {
       const signedReply = ensureHtmlAlternative(
         appendSignature(replyText, replyHtml, args.signature),
       );
-      this.validateOutgoingContent(signedReply.text, signedReply.html);
+      this.validateOutgoingContent(signedReply.text, applyDefaultHtmlStyle(signedReply.html));
       let finalText: string | undefined = signedReply.text;
-      let finalHtml: string | undefined = signedReply.html;
+      let finalHtml: string | undefined = applyDefaultHtmlStyle(signedReply.html);
 
       if (includeOriginal && originalMessage) {
         const originalDate = originalMessage.date
@@ -1056,12 +1057,12 @@ export class MailMCPServer {
           originalDate,
           originalFromDisplay,
           EMAIL_CONFIG.FILES.maxBodyCharacters,
+          html => applyDefaultHtmlStyle(html)!,
         );
         finalText = replyContent.text;
         finalHtml = replyContent.html;
       }
 
-      finalHtml = applyDefaultHtmlStyle(finalHtml);
       this.validateOutgoingContent(finalText, finalHtml);
 
       // 构建邮件选项

@@ -227,12 +227,12 @@ env_vars = [
 
 ### 邮箱操作
 
-- **list_mailboxes**: 无需参数
+- **list_mailboxes**：无需参数。后续调用请原样传回目录名，包括开头或结尾的空格；只有 INBOX 不区分大小写。
 
 ### 搜索操作
 
 - **search_messages**：组合使用 `mailboxes`、`from`、`to`、`subject`、`body`、IMAP `keywords`、`unread`、包含下界的 `since`、不包含上界的 `before`、`limit` 和 `includeBody`。不传 `mailboxes` 时搜索 INBOX 和自动识别的已发送邮箱。日期时间搜索会将 IMAP 日历日期候选窗口在两侧各放宽两天，再按精确时间过滤，覆盖 UTC+14 到 UTC-12 的完整 INTERNALDATE 日期跨度。`MAIL_MAX_SEARCH_CANDIDATES` 范围内的候选会先按内部日期排序再应用 `limit`；超出上限时提示缩小范围，不会按 UID 顺序猜测。默认仅返回摘要。Keywords 必须是符合 atom 安全规则的自定义 IMAP keyword；空白、控制字符、IMAP 语法字符和系统 flag 会被拒绝。`includeBody` 为 true 时，如果选中的邮件在补取正文前消失，或本次调用会超过正文响应总量预算，调用会明确失败。
-- **find_unreplied_messages**：`sender`（必填）、`mailboxes`（可选，默认 INBOX）、`since`、`before`、`limit`。根据 `In-Reply-To` 和 `References` 判断；缺少 `Message-ID` 的邮件会进入 `unknownMessages`，不再按主题猜测。
+- **find_unreplied_messages**：`sender`（必填）、`mailboxes`（可选，默认 INBOX）、`since`、`before`、`limit`。根据 `In-Reply-To` 和 `References` 判断；Message-ID 区分大小写，并归一化等价引号写法。日期参数仅筛选收到的候选邮件，回复检查会覆盖已发送目录中的线程引用头，不受存储或导入日期影响。候选邮件和已发送邮件共用 `MAIL_MAX_SEARCH_CANDIDATES`、`MAIL_MAX_SEARCH_HEADER_BYTES` 上限；超限时明确报错，不会猜测为“未回复”。缺少 `Message-ID` 的邮件会进入 `unknownMessages`，不再按主题猜测。
 
 ```json
 {

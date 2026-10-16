@@ -227,12 +227,12 @@ The server exposes 14 tools, with explicit mailbox references for message operat
 
 ### Mailbox Operations
 
-- **list_mailboxes**: No parameters required
+- **list_mailboxes**: No parameters required. Pass mailbox names back exactly as returned, including leading/trailing spaces. Only INBOX is case-insensitive.
 
 ### Search Operations
 
 - **search_messages**: Combines `mailboxes`, `from`, `to`, `subject`, `body`, IMAP `keywords`, `unread`, inclusive `since`, exclusive `before`, `limit`, and `includeBody`. Omit `mailboxes` to search INBOX and the detected sent mailbox. Date/time searches widen the IMAP calendar-day query by two days on each side, then apply the exact instant locally so the full UTC+14 to UTC-12 INTERNALDATE spread cannot discard valid messages early. All candidates within `MAIL_MAX_SEARCH_CANDIDATES` are sorted by internal date before `limit` is applied; wider searches fail with a narrowing hint instead of guessing from UID order. Results are summaries by default. Keywords must be atom-safe custom IMAP keywords; whitespace, control characters, IMAP syntax characters, and system flags are rejected. When `includeBody` is true, the call fails explicitly if a selected message disappears before hydration or the request-wide response-body budget would be exceeded.
-- **find_unreplied_messages**: `sender` (required), `mailboxes` (optional, defaults to INBOX), `since`, `before`, and `limit`. Uses `In-Reply-To` and `References`; messages without `Message-ID` are returned as `unknownMessages` instead of being guessed from their subject.
+- **find_unreplied_messages**: `sender` (required), `mailboxes` (optional, defaults to INBOX), `since`, `before`, and `limit`. Uses `In-Reply-To` and `References` with case-sensitive Message-ID matching and equivalent quoting normalized. Date filters select incoming candidates only: replies are checked across Sent thread headers regardless of their storage/import date. Incoming and Sent header scans share `MAIL_MAX_SEARCH_CANDIDATES` and `MAIL_MAX_SEARCH_HEADER_BYTES`; exceeding either limit fails explicitly rather than guessing “unreplied.” Messages without `Message-ID` are returned as `unknownMessages` instead of being guessed from their subject.
 
 ```json
 {

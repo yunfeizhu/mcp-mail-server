@@ -2,6 +2,7 @@ import Imap from 'imap';
 import { EventEmitter } from 'events';
 import { simpleParser } from 'mailparser';
 import { extractEmailsFromAddressField } from './mail-utils';
+import { parseMailboxName } from './message-ref';
 
 export interface IMAPConfig {
   host: string;
@@ -702,6 +703,7 @@ export class IMAPClient extends EventEmitter {
     console.error(`[IMAP] Message ${uid} deleted successfully`);
   }
 
+  /** Move one selected-mailbox UID, preserving the exact destination name on both protocol paths. */
   async moveMessage(uid: number, targetMailbox: string): Promise<MoveMessageResult> {
     if (!this.imap) {
       throw new Error('Not connected to IMAP server');
@@ -715,14 +717,11 @@ export class IMAPClient extends EventEmitter {
       throw new Error('Message UID must be a positive integer');
     }
 
-    const normalizedTarget = targetMailbox.trim();
-    if (!normalizedTarget) {
-      throw new Error('Target mailbox must be a non-empty string');
-    }
+    const destinationMailbox = parseMailboxName(targetMailbox, 'Target mailbox');
 
     const bothInbox =
-      sourceMailbox.toUpperCase() === 'INBOX' && normalizedTarget.toUpperCase() === 'INBOX';
-    if (sourceMailbox === normalizedTarget || bothInbox) {
+      sourceMailbox.toUpperCase() === 'INBOX' && destinationMailbox.toUpperCase() === 'INBOX';
+    if (sourceMailbox === destinationMailbox || bothInbox) {
       throw new Error('Target mailbox must be different from the source mailbox');
     }
 
@@ -743,7 +742,7 @@ export class IMAPClient extends EventEmitter {
             callback: MoveCallback,
           ) => void;
           try {
-            move(uid, normalizedTarget, (error, newUIDs) => {
+            move(uid, destinationMailbox, (error, newUIDs) => {
               const destinationUid = this.parseDestinationUid(newUIDs);
               if (error && destinationUid !== undefined) {
                 reject(
@@ -759,7 +758,7 @@ export class IMAPClient extends EventEmitter {
                 return;
               }
               console.error(
-                `[IMAP] Moved message ${sourceMailbox}/UID ${uid} to ${normalizedTarget}` +
+                `[IMAP] Moved message ${sourceMailbox}/UID ${uid} to ${destinationMailbox}` +
                   (destinationUid ? `/UID ${destinationUid}` : ''),
               );
               resolve(destinationUid === undefined ? {} : { destinationUid });
@@ -802,7 +801,7 @@ export class IMAPClient extends EventEmitter {
             callback: CopyCallback,
           ) => void;
           try {
-            copy(uid, normalizedTarget, (error, newUIDs) => {
+            copy(uid, destinationMailbox, (error, newUIDs) => {
               if (error) {
                 reject(new Error(`IMAP COPY failed: ${error.message}`));
                 return;
@@ -868,7 +867,7 @@ export class IMAPClient extends EventEmitter {
     }
 
     console.error(
-      `[IMAP] Moved message ${sourceMailbox}/UID ${uid} to ${normalizedTarget} using UIDPLUS fallback` +
+      `[IMAP] Moved message ${sourceMailbox}/UID ${uid} to ${destinationMailbox} using UIDPLUS fallback` +
         (destinationUid ? `/UID ${destinationUid}` : ''),
     );
     return destinationUid === undefined ? {} : { destinationUid };
