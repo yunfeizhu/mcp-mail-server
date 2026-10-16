@@ -455,6 +455,19 @@ GitHub Actions 会在每次推送分支和提交 PR 时，通过 Node.js 22、24
 <!-- release-notes:start -->
 
 <details open>
+<summary><strong>v2.1.2</strong> — 2026-10-16</summary>
+
+<!-- release-source-sha256: a4841de261bd07d71dd1f35185b49d35799a6a55fdf1e617a5a5f583b1b2c28c -->
+
+### 修复
+
+- 修复邮件收件人解析和回复边界问题：保留包含撇号、特殊符号、引号或 Unicode 字符的完整地址；邮箱目录名保留首尾空格，避免读取、删除或移动到错误目录；长引用按最终带样式的 HTML 大小裁剪；未回复判断改用区分大小写、支持等价引号写法的线程引用，不再受同一秒内的回复或邮件迁移后的存储日期影响。([6b4977d](https://github.com/yunfeizhu/mcp-mail-server/commit/6b4977d6dade728b1ce96a46e0c61d3d5f776d1f))
+
+</details>
+
+<!-- release-notes:end -->
+
+<details>
 <summary><strong>v2.1.1</strong> — 2026-10-14</summary>
 
 ### 修复
@@ -462,8 +475,6 @@ GitHub Actions 会在每次推送分支和提交 PR 时，通过 Node.js 22、24
 - 修复 `Re`、`回复`、`答复` 使用全角冒号 `：` 或冒号前带空白时无法正确清理回复前缀的问题。`回复：Hello`、`RE : Hello` 和 `Re: 回复：RE : Hello` 现在均规范化为 `Hello`，避免回复主题不断叠加前缀，并使已发送邮件的线程查找能正确匹配同一主题。([#17](https://github.com/yunfeizhu/mcp-mail-server/pull/17)，[#16](https://github.com/yunfeizhu/mcp-mail-server/issues/16))
 
 </details>
-
-<!-- release-notes:end -->
 
 <details>
 <summary><strong>v2.1.0</strong> — 批量邮件维护与按文件名选择附件</summary>
