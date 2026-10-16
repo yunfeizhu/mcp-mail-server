@@ -442,10 +442,11 @@ test('cleanReplySubject strips ASCII and full-width reply prefixes', () => {
 test('release verification rejects mismatched versions, unsafe tags, and missing release notes', () => {
   const manifest = { name: 'mcp-mail-server', version: '2.1.0' };
   const lockfile = { ...manifest, packages: { '': manifest } };
-  const notes = '# Changelog\n\n## [2.1.0] - 2026-09-27\n';
+  const notes = '# Changelog\n\n## [2.1.0] - 2026-09-27\n\n### 修复\n\n- 验证发布元数据。\n';
   const additional = {
     readme: '## Release notes\n\n<summary><strong>v2.1.0</strong></summary>\n',
-    chineseReadme: '## 版本说明\n\n<summary><strong>v2.1.0</strong></summary>\n',
+    chineseReadme:
+      '## 版本说明\n\n<details>\n<summary><strong>v2.1.0</strong></summary>\n\n### 修复\n\n- 验证发布元数据。\n\n</details>\n',
     releaseManifest: { '.': '2.1.0' },
   };
   const verifyReleaseMetadata = (

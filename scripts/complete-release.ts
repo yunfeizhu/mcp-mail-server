@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { synchronizeReleaseDocuments, type ReleaseDocuments } from './release-notes';
+import {
+  chineseReleaseNotesPath,
+  synchronizeReleaseDocuments,
+  type ReleaseDocuments,
+} from './release-notes';
 import { verifyReleaseMetadata } from './verify-release';
 
 const repository = 'yunfeizhu/mcp-mail-server';
@@ -107,6 +111,7 @@ async function readAtCommit(api: GitHubRequest, filename: string, sha: string): 
   return Buffer.from(file.content, 'base64').toString('utf8');
 }
 
+/** Read immutable release data, require reviewed Chinese notes, and atomically update generated documents. */
 async function synchronizePullRequest(api: GitHubRequest, pr: PullRequest): Promise<string> {
   const filenames = [
     'package.json',
@@ -121,8 +126,18 @@ async function synchronizePullRequest(api: GitHubRequest, pr: PullRequest): Prom
     await Promise.all(filenames.map(filename => readAtCommit(api, filename, pr.head.sha)));
   const manifest = JSON.parse(packageText) as { name: string; version: string; private?: boolean };
   const lockfile = JSON.parse(lockText);
+  const chineseNotesPath = chineseReleaseNotesPath(manifest.version);
+  let chineseNotes: string;
+  try {
+    chineseNotes = await readAtCommit(api, chineseNotesPath, pr.head.sha);
+  } catch (error) {
+    throw new Error(
+      `Cannot load ${chineseNotesPath} at release PR #${pr.number} head ${pr.head.sha}. Add reviewed Chinese notes on main and refresh Prepare release; the PR stays in draft.`,
+      { cause: error },
+    );
+  }
   const documents: ReleaseDocuments = { changelog, chineseChangelog, readme, chineseReadme };
-  const updated = await synchronizeReleaseDocuments(manifest.version, documents);
+  const updated = await synchronizeReleaseDocuments(manifest.version, documents, chineseNotes);
   verifyReleaseMetadata(
     `v${manifest.version}`,
     manifest,
@@ -133,6 +148,7 @@ async function synchronizePullRequest(api: GitHubRequest, pr: PullRequest): Prom
       readme: updated.readme,
       chineseReadme: updated.chineseReadme,
       releaseManifest: JSON.parse(manifestText) as Record<string, string>,
+      chineseNotes,
     },
   );
   const paths: Record<keyof ReleaseDocuments, string> = {

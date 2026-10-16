@@ -51,12 +51,27 @@ No `NPM_TOKEN` or `NODE_AUTH_TOKEN` secret is needed. The publish job uses GitHu
 
 1. Merge ordinary code PRs with [Conventional Commit](https://www.conventionalcommits.org/) messages: `fix:` means a patch, `feat:` a minor release, and `!` or a `BREAKING CHANGE:` footer a major release. Use the same convention for squash-merge titles. Documentation/CI-only commits do not independently require a release.
 2. **Prepare release** creates or refreshes one draft release PR. Release Please updates `package.json`, `package-lock.json`, `CHANGELOG.md`, and `.release-please-manifest.json`. Our trusted `main` script reads that PR as data and synchronizes `CHANGELOG.zh.md`, `README.md`, and `README-zh.md` in an atomic, non-force-pushed documentation commit.
-3. The workflow explicitly dispatches the read-only CI workflow for the release branch, waits for the exact final commit to pass, and only then marks the PR ready for review. Failures and concurrent head changes leave it in draft. Review the version and notes; merge the release PR **when you decide to publish**. Leaving it open does not release anything.
-4. The next `main` run creates the version tag and GitHub Release, verifies the tag's commit, and explicitly dispatches npm publishing from that tag. Watch both **Prepare release** and **Publish to npm** in Actions. Only the publish job has npm OIDC permission.
+3. Maintain the reviewed Chinese release description in `release-notes/X.Y.Z.zh.md` on `main` as described below. Missing, untranslated, or stale notes leave the release PR in draft instead of copying English descriptions into Chinese files.
+4. The workflow explicitly dispatches the read-only CI workflow for the release branch, waits for the exact final commit to pass, and only then marks the PR ready for review. Failures and concurrent head changes leave it in draft. Review the version and notes; merge the release PR **when you decide to publish**. Leaving it open does not release anything.
+5. The next `main` run creates the version tag and GitHub Release, verifies the tag's commit, and explicitly dispatches npm publishing from that tag. Watch both **Prepare release** and **Publish to npm** in Actions. Only the publish job has npm OIDC permission.
 
-GitHub does not reliably start follow-up workflows for pushes made with `GITHUB_TOKEN`; the explicit CI and publish dispatches avoid needing a personal access token. The Chinese files localize category headings, version, and date; commit descriptions are preserved verbatim, not machine-translated. Existing handwritten release history and previous generated entries are retained. README synchronization updates release summaries, not feature documentation or usage examples; update those in the relevant code PR.
+GitHub does not reliably start follow-up workflows for pushes made with `GITHUB_TOKEN`; the explicit CI and publish dispatches avoid needing a personal access token. Chinese descriptions come from reviewed versioned Markdown, not from category-heading replacement or an external translation service. Existing handwritten release history and previous generated entries are retained. README synchronization updates release summaries, not feature documentation or usage examples; update those in the relevant code PR.
 
-You do not need to edit versions, assemble release notes, or create tags manually. Runtime and smoke-test versions are read from `package.json`. To refresh a draft after resolving a workflow failure, run **Actions → Prepare release → Run workflow** on `main`, or use `gh workflow run release-please.yml --ref main`.
+You do not need to edit versions, copy release descriptions into multiple files, or create tags manually. Chinese prose still requires maintainer review. Runtime and smoke-test versions are read from `package.json`. To refresh a draft after adding Chinese notes or resolving a workflow failure, run **Actions → Prepare release → Run workflow** on `main`, or use `gh workflow run release-please.yml --ref main`.
+
+### Maintain Chinese release notes
+
+From a checkout containing the pending release's English `CHANGELOG.md`, print a template:
+
+```bash
+npm run --silent release:notes:zh -- 2.1.2
+```
+
+An optional second argument selects another English changelog path. This command prints to stdout and never overwrites a translation. Copy the output into `release-notes/2.1.2.zh.md`, translate the descriptions, and submit that source file through an ordinary PR targeting `main`. Keeping the source on `main` ensures it survives Release Please rebuilding its release branch. Do not maintain the two generated Chinese sections separately.
+
+Keep the first-line `release-source-sha256` marker. It binds the translation to the version and the complete current English notes, including links. Formatting-only bullet/line-ending differences and release dates do not invalidate it. If new releasable commits change the English notes, the workflow stops in draft: review and update the Chinese description before copying the new template's marker. Never update only the marker to bypass translation review.
+
+Every release-note item must contain Chinese prose; protocol names, inline code, and URLs may remain unchanged. Heading-only translations and English-only items are rejected. The reviewed source is synchronized to both `CHANGELOG.zh.md` and `README-zh.md` without overwriting the original prose. Release verification checks their content, matching source markers, and consistency with that source. Previously published handwritten releases without source markers remain supported.
 
 The initial manifest starts at the already published `2.1.0`, with a bootstrap commit at its release preparation. This prevents the first automated release from repeating the project's entire history. The previously merged reply-subject fix is therefore eligible for the next patch release; merging this CI setup PR does not itself publish a version.
 

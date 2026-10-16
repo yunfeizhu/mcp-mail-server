@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
@@ -9,9 +10,12 @@ import {
   type GitHubRequest,
 } from '../scripts/complete-release';
 import {
+  chineseReleaseNotesPath,
+  createChineseReleaseNotes,
+  readChineseReleaseNotes,
   readmeStart,
   readmeEnd,
-  synchronizeReleaseDocuments,
+  synchronizeReleaseDocuments as synchronizeRaw,
   type ReleaseDocuments,
 } from '../scripts/release-notes';
 import { verifyReleaseMetadata } from '../scripts/verify-release';
@@ -22,6 +26,17 @@ const initialSha = 'a'.repeat(40);
 const synchronizedSha = 'b'.repeat(40);
 const concurrentSha = 'c'.repeat(40);
 const historicalNotes = '## [2.1.0] - 2026-09-27\n\n### 新增\n\n- 手写历史说明\n';
+const chineseBody =
+  '### 修复\n\n- **mail:** 修复回复主题前缀，并保留历史描述和链接。([#17](https://github.com/yunfeizhu/mcp-mail-server/pull/17))';
+
+/** Give existing workflow fixtures explicitly reviewed translations rather than an English fallback. */
+async function synchronizeReleaseDocuments(version: string, source: ReleaseDocuments) {
+  return synchronizeRaw(
+    version,
+    source,
+    createChineseReleaseNotes(version, source.changelog, chineseBody),
+  );
+}
 
 test('release configuration refreshes draft PRs even when release notes have not changed', async () => {
   const configuration = JSON.parse(
@@ -65,14 +80,15 @@ test('release documentation synchronizes all summaries and preserves description
   const updated = await synchronizeReleaseDocuments('2.1.1', documents());
   assert.match(updated.changelog, /## \[2\.1\.1\]/);
   assert.match(updated.changelog, /Keep historical English notes/);
-  assert.match(updated.chineseChangelog, /## \[2\.1\.1\] - 2026-10-14\n\n### 修复/);
+  assert.match(updated.chineseChangelog, /## \[2\.1\.1\] - 2026-10-14/);
+  assert.match(updated.chineseChangelog, /### 修复/);
   assert.ok(updated.chineseChangelog.endsWith(historicalNotes));
+  assert.match(updated.readme, /strip reply prefixes/);
+  assert.match(updated.chineseReadme, /修复回复主题前缀/);
+  assert.doesNotMatch(updated.chineseReadme, /strip reply prefixes/);
   for (const summary of [updated.readme, updated.chineseReadme]) {
     assert.match(summary, /<summary><strong>v2\.1\.1<\/strong> — 2026-10-14/);
-    assert.match(
-      summary,
-      /strip reply prefixes \(\[#17\]\(https:\/\/github.com\/yunfeizhu\/mcp-mail-server\/pull\/17\)\)/,
-    );
+    assert.match(summary, /\[#17\]\(https:\/\/github.com\/yunfeizhu\/mcp-mail-server\/pull\/17\)/);
     assert.match(summary, /v2\.1\.0<\/strong> — handwritten history/);
     assert.match(summary, /^Usage stays untouched\./m);
     assert.match(summary, /^Footer stays untouched\./m);
@@ -90,7 +106,8 @@ test('release synchronization is idempotent and replaces the same draft notes ra
     changelog: first.changelog.replace('strip reply prefixes', 'strip more reply prefixes'),
   });
   assert.equal(changed.chineseChangelog.match(/## \[2\.1\.1\]/g)?.length, 1);
-  assert.match(changed.chineseChangelog, /strip more reply prefixes/);
+  assert.match(changed.chineseChangelog, /修复回复主题前缀/);
+  assert.doesNotMatch(changed.chineseChangelog, /strip more reply prefixes/);
   assert.ok(changed.chineseChangelog.endsWith(historicalNotes));
 });
 
@@ -165,6 +182,7 @@ test('release verification enforces both README versions and the Release Please 
     readme: updated.readme,
     chineseReadme: updated.chineseReadme,
     releaseManifest: { '.': '2.1.1' },
+    chineseNotes: createChineseReleaseNotes('2.1.1', documents().changelog, chineseBody),
   };
   verifyReleaseMetadata(
     'v2.1.1',
@@ -205,6 +223,189 @@ test('release verification enforces both README versions and the Release Please 
   );
 });
 
+test('Chinese release sources preserve reviewed prose across refreshes and harmless English formatting', async () => {
+  const input = documents();
+  const reviewed = createChineseReleaseNotes('2.1.1', input.changelog, chineseBody);
+  const first = await synchronizeRaw('2.1.1', input, reviewed);
+  const refreshed = await synchronizeRaw('2.1.1', first, reviewed);
+  assert.deepEqual(refreshed, first);
+  const reformatted = {
+    ...first,
+    changelog: first.changelog.replace(/^- /gm, '* ').replace(/\n/g, '\r\n'),
+  };
+  const afterFormatting = await synchronizeRaw('2.1.1', reformatted, reviewed);
+  assert.equal(afterFormatting.chineseChangelog, first.chineseChangelog);
+  assert.equal(afterFormatting.chineseReadme, first.chineseReadme);
+  assert.equal(readChineseReleaseNotes('2.1.1', input.changelog, reviewed), chineseBody);
+  assert.match(first.chineseChangelog, /release-source-sha256:/);
+  assert.doesNotMatch(first.chineseChangelog, /strip reply prefixes/);
+});
+
+for (const source of [undefined, '', ' \n ']) {
+  test(
+    'missing Chinese release prose cannot fall back to English: ' + JSON.stringify(source),
+    async () => {
+      await assert.rejects(
+        synchronizeRaw('2.1.1', documents(), source),
+        /Missing release-notes\/2\.1\.1\.zh\.md/,
+      );
+    },
+  );
+}
+
+for (const body of [
+  '### 修复\n\n- preserve mail identities and bound styled replies',
+  '### 修复\n\n- 修复第一项。\n- untranslated second item',
+  '### 修复\n\n- fix ' + String.fromCharCode(96) + '中文' + String.fromCharCode(96),
+  '### 修复\n\n- fix https://example.com/中文',
+  '### 修复\n\n- fix <!-- 中文注释不能当作译文 -->',
+  '### 修复',
+]) {
+  test(
+    'Chinese headings or non-prose text do not satisfy localization: ' + body.split('\n').at(-1),
+    async () => {
+      const input = documents();
+      const source = createChineseReleaseNotes('2.1.1', input.changelog, body);
+      await assert.rejects(synchronizeRaw('2.1.1', input, source), /Chinese|untranslated/);
+    },
+  );
+}
+
+test('Chinese source fingerprints reject changed descriptions, links, versions, and duplicate markers', async () => {
+  const input = documents();
+  const source = createChineseReleaseNotes('2.1.1', input.changelog, chineseBody);
+  for (const changelog of [
+    input.changelog.replace('strip reply prefixes', 'strip additional reply prefixes'),
+    input.changelog.replace('/pull/17', '/pull/18'),
+    input.changelog.replace('### Bug Fixes', '### Features'),
+    input.changelog.replace('\n## [2.1.0]', '\n- another newly accumulated fix\n\n## [2.1.0]'),
+  ]) {
+    await assert.rejects(synchronizeRaw('2.1.1', { ...input, changelog }, source), /stale/);
+  }
+  for (const invalid of [
+    chineseBody,
+    source.replace(/sha256: [a-f0-9]+/, 'sha256: ' + '0'.repeat(64)),
+    source + '\n' + source.split('\n')[0],
+    createChineseReleaseNotes('2.1.2', englishNotes('2.1.2'), chineseBody),
+  ]) {
+    await assert.rejects(synchronizeRaw('2.1.1', input, invalid), /stale|source marker/);
+  }
+  const changedDate = input.changelog.replace('2026-10-14', '2026-10-16');
+  const dated = await synchronizeRaw('2.1.1', { ...input, changelog: changedDate }, source);
+  assert.match(dated.chineseChangelog, /2026-10-16/);
+  assert.match(dated.chineseChangelog, /修复回复主题前缀/);
+});
+
+test('localized sources retain protocol names, code and links while archiving earlier Chinese releases', async () => {
+  const input = documents();
+  const body =
+    '### 修复\n\n- 保留 ' +
+    String.fromCharCode(96) +
+    'Message-ID' +
+    String.fromCharCode(96) +
+    ' 大小写和 [相关说明](https://example.com/docs)。';
+  const first = await synchronizeRaw(
+    '2.1.1',
+    input,
+    createChineseReleaseNotes('2.1.1', input.changelog, body),
+  );
+  const nextInput = { ...first, changelog: englishNotes('2.1.2') };
+  const second = await synchronizeRaw(
+    '2.1.2',
+    nextInput,
+    createChineseReleaseNotes('2.1.2', nextInput.changelog, chineseBody),
+  );
+  for (const target of [second.chineseChangelog, second.chineseReadme]) {
+    assert.match(target, /Message-ID/);
+    assert.match(target, /https:\/\/example.com\/docs/);
+    assert.match(target, /修复回复主题前缀/);
+  }
+});
+
+test('the Chinese template CLI prints a current source marker without treating English as translated', async () => {
+  const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  const result = spawnSync(
+    process.execPath,
+    ['--import', 'tsx', 'scripts/prepare-chinese-release-notes.ts', manifest.version],
+    { cwd: process.cwd(), encoding: 'utf8' },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^<!-- release-source-sha256: [a-f0-9]{64} -->/);
+  assert.match(result.stdout, /^### /m);
+  assert.throws(
+    () =>
+      readChineseReleaseNotes(
+        '2.1.1',
+        englishNotes(),
+        createChineseReleaseNotes('2.1.1', englishNotes()),
+      ),
+    /untranslated/,
+  );
+});
+
+test('localization source paths reject unsafe and prerelease versions', () => {
+  for (const version of ['../2.1.2', '2.1.2-beta.1', '02.1.2', '', '2.1.2/other']) {
+    assert.throws(() => chineseReleaseNotesPath(version), /stable release version/);
+  }
+  assert.equal(chineseReleaseNotesPath('2.1.2'), 'release-notes/2.1.2.zh.md');
+});
+
+test('release verification rejects English residue, inconsistent prose, and stale or missing localized sources', async () => {
+  const input = documents();
+  const chineseNotes = createChineseReleaseNotes('2.1.1', input.changelog, chineseBody);
+  const updated = await synchronizeRaw('2.1.1', input, chineseNotes);
+  const manifest = { name: 'mcp-mail-server', version: '2.1.1' };
+  const lock = { ...manifest, packages: { '': manifest } };
+  const additional = {
+    readme: updated.readme,
+    chineseReadme: updated.chineseReadme,
+    releaseManifest: { '.': '2.1.1' },
+    chineseNotes,
+  };
+  const verify = (
+    changelog = updated.chineseChangelog,
+    options = additional,
+    english = updated.changelog,
+  ) => verifyReleaseMetadata('v2.1.1', manifest, lock, english, changelog, options);
+  verify();
+  const englishResidue = updated.chineseChangelog.replace(
+    '修复回复主题前缀，并保留历史描述和链接。',
+    'strip reply prefixes',
+  );
+  assert.throws(() => verify(englishResidue), /untranslated/);
+  assert.throws(
+    () =>
+      verify(undefined, {
+        ...additional,
+        chineseReadme: additional.chineseReadme.replace('历史描述', '错误描述'),
+      }),
+    /descriptions must match/,
+  );
+  assert.throws(
+    () => verify(undefined, { ...additional, chineseNotes: undefined }),
+    /Missing release-notes/,
+  );
+  assert.throws(
+    () =>
+      verify(undefined, additional, updated.changelog.replace('strip reply prefixes', 'a new fix')),
+    /stale/,
+  );
+  const bothEdited = {
+    ...additional,
+    chineseReadme: additional.chineseReadme.replace('历史描述', '未经审核的描述'),
+  };
+  assert.throws(
+    () => verify(updated.chineseChangelog.replace('历史描述', '未经审核的描述'), bothEdited),
+    /match the reviewed translation/,
+  );
+  for (const chineseReadme of [
+    additional.chineseReadme.replace(/<!-- release-source-sha256:[^\n]+-->/, ''),
+    additional.chineseReadme.replace(/sha256: [a-f0-9]+/, 'sha256: ' + '0'.repeat(64)),
+  ]) {
+    assert.throws(() => verify(undefined, { ...additional, chineseReadme }), /source markers/);
+  }
+});
+
 function releaseApi(
   options: {
     ci?: 'success' | 'failure' | 'missing' | 'wrong-sha';
@@ -216,6 +417,7 @@ function releaseApi(
     alreadySynchronized?: ReleaseDocuments;
     previousRun?: boolean;
     graphQLError?: boolean;
+    chineseNotes?: string | null;
   } = {},
 ) {
   const source = options.alreadySynchronized ?? documents();
@@ -229,6 +431,10 @@ function releaseApi(
     'README.md': source.readme,
     'README-zh.md': source.chineseReadme,
   };
+  if (options.chineseNotes !== null) {
+    files[chineseReleaseNotesPath('2.1.1')] =
+      options.chineseNotes ?? createChineseReleaseNotes('2.1.1', source.changelog, chineseBody);
+  }
   let sha = initialSha;
   let draft = !options.existingReady;
   let pullReads = 0;
@@ -280,7 +486,9 @@ function releaseApi(
     if (route.startsWith(`${root}/contents/`)) {
       const [filename, ref] = route.slice(`${root}/contents/`.length).split('?ref=');
       assert.equal(ref, initialSha, 'Read files only from the immutable PR head');
-      assert.ok(filename in files);
+      if (!(filename in files)) {
+        throw new Error('GitHub GET failed (404)');
+      }
       return {
         type: 'file',
         encoding: 'base64',
@@ -332,6 +540,32 @@ function releaseApi(
 }
 
 const fastWait = { attempts: 2, sleep: async () => {} };
+
+test('missing, stale, or untranslated sources keep release PRs in draft without documentation writes or CI dispatch', async () => {
+  for (const chineseNotes of [
+    null,
+    createChineseReleaseNotes('2.1.1', englishNotes()),
+    createChineseReleaseNotes(
+      '2.1.1',
+      englishNotes().replace('strip reply prefixes', 'new fix'),
+      chineseBody,
+    ),
+  ]) {
+    const fixture = releaseApi({ existingReady: true, chineseNotes });
+    await assert.rejects(
+      completeReleasePullRequest(fixture.api, 19, fastWait),
+      /Cannot load|untranslated|stale/,
+    );
+    assert.equal(fixture.isDraft(), true);
+    assert.ok(!fixture.calls.some(call => call.route.includes('/git/')));
+    assert.ok(!fixture.calls.some(call => call.route.endsWith('/ci.yml/dispatches')));
+    assert.ok(
+      !fixture.calls.some(call =>
+        (JSON.stringify(call.body) || '').includes('markPullRequestReadyForReview'),
+      ),
+    );
+  }
+});
 
 test('preflight moves existing release PRs to draft before the release action touches their branch', async () => {
   const fixture = releaseApi({ existingReady: true });
