@@ -10,6 +10,7 @@ const tsxCli = path.join(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 const buildSource = path.join(projectRoot, 'scripts', 'build.ts');
 const nodeBuiltins = new Set([...builtinModules, ...builtinModules.map(name => `node:${name}`)]);
 
+/** Run a verification subprocess and reject on either a nonzero exit or termination signal. */
 function run(args: string[], label: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const child = spawn(process.execPath, args, {
@@ -64,6 +65,7 @@ await run(
     '--test',
     path.join(projectRoot, 'test', 'core.test.ts'),
     path.join(projectRoot, 'test', 'bundle-size.test.ts'),
+    path.join(projectRoot, 'test', 'upload-codecov.test.ts'),
     path.join(projectRoot, 'test', 'release.test.ts'),
     path.join(projectRoot, 'test', 'server-smoke.test.ts'),
   ],

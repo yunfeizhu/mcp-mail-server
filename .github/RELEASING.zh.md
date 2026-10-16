@@ -19,7 +19,12 @@
 
 预览和体积工作流仅在 `yunfeizhu/mcp-mail-server` 中运行，触发条件为 `main` 推送或面向 `main` 的非草稿 PR。预览先执行质量检查，使用独立的 `0.0.0-preview-<sha>` 版本，上传至 **pkg.pr.new，而非 npm**；不修改仓库版本，也不创建正式版本。预览链接是尚未评审的开发构建，请使用测试邮箱，不要提供生产凭据。CodeRabbit 的功能与额度取决于账号方案；这些配置不会购买订阅。
 
-Codecov 使用官方插件的**公开仓库免 Token 上传**（`gitService: github`），不用仓库上传令牌或 npm 凭据。完成账号/仓库引导后，在[体积看板](https://app.codecov.io/github/yunfeizhu/mcp-mail-server/bundles)核对首次上传。无需新增 `CODECOV_TOKEN`、`NPM_TOKEN` 或 GitHub OIDC 权限。只有专用工作流显式设置 `CODECOV_BUNDLE_ANALYSIS=true` 才上传；普通本地构建、测试和正式 npm 发布都不会上传分析，插件遥测已关闭。构建成功不代表外部服务已成功接收报告。
+Codecov 按事件区分认证方式，不保存 `CODECOV_TOKEN`，也不使用 npm 凭据：
+
+- 公开仓库 PR 使用官方支持的[临时免 Token 分支标识](https://docs.codecov.com/docs/codecov-tokens#commits-on-unprotected-branches)：`pr<PR 编号>:<head 分支>`，同时明确传递 head 提交和 PR 编号。它只改变 Codecov 元数据，不创建或修改 GitHub 分支。PR 构建不提供 secret 或 OIDC 权限，账号级 Token 校验保持开启。
+- `bundle-baseline.yml` 仅在可信 `main` 推送时运行，使用官方 SDK 的 GitHub OIDC 认证。只有这个基线任务申请 `id-token: write`，不允许从 PR 或任意分支手动触发。npm 发布流程不变。
+
+`CODECOV_BUNDLE_ANALYSIS=true` 只让官方 Rollup 插件输出离线分析文件，随后由专用工作流执行 `npm run bundle:upload`。`scripts/upload-codecov.ts` 验证事件身份，并开启 SDK 的严格错误传递；申请上传地址或上传报告失败时，该分析任务会明确失败，不再静默忽略。普通本地构建、测试和正式 npm 发布都不会上传分析，插件遥测已关闭。完成账号/仓库引导后，在[体积看板](https://app.codecov.io/github/yunfeizhu/mcp-mail-server/bundles)核对接收结果。首次 `main` OIDC 基线上传及默认分支评论工作流，需要配置合并后才能实测验收。
 
 两种体积报告都只测量已打包的 CLI 代码，**不包含外部运行时依赖**，不代表安装总大小、npm tarball 下载大小或运行性能。Codecov 采用信息提示模式和 5% 警告阈值，不新增必须通过的门禁。Actions 评论在 Node.js 24 上分别使用 PR head/base 精确提交及各自 lockfile 构建，gzip 使用级别 9。
 

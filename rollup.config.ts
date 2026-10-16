@@ -9,12 +9,14 @@ import ts from 'typescript';
 const NODE_BUILTINS = new Set([...builtinModules, ...builtinModules.map(name => `node:${name}`)]);
 const RUNTIME_PACKAGES = ['@modelcontextprotocol/sdk', 'imap', 'mailparser', 'nodemailer', 'zod'];
 
+/** Keep declared runtime packages external, including their subpath imports. */
 function isRuntimePackage(id: string): boolean {
   return RUNTIME_PACKAGES.some(
     packageName => id === packageName || id.startsWith(`${packageName}/`),
   );
 }
 
+/** Transpile project sources without bundling TypeScript or changing runtime dependencies. */
 function transpileTypeScript(): Plugin {
   return {
     name: 'transpile-typescript',
@@ -52,14 +54,10 @@ function transpileTypeScript(): Plugin {
 interface BuildOptions {
   minify?: boolean;
   bundleAnalysis?: boolean;
-  analysisDryRun?: boolean;
 }
 
-export function createRollupConfig({
-  minify = false,
-  bundleAnalysis = false,
-  analysisDryRun = false,
-}: BuildOptions = {}) {
+/** Create the release build; optional Codecov analysis only emits offline statistics. */
+export function createRollupConfig({ minify = false, bundleAnalysis = false }: BuildOptions = {}) {
   return {
     input: 'src/index.ts',
     output: {
@@ -83,12 +81,8 @@ export function createRollupConfig({
               bundleName: 'mcp-mail-server',
               gitService: 'github',
               telemetry: false,
-              dryRun: analysisDryRun,
-              uploadOverrides: {
-                sha: process.env.CODECOV_COMMIT_SHA || undefined,
-                compareSha: process.env.CODECOV_BASE_SHA || undefined,
-                pr: process.env.CODECOV_PR_NUMBER || undefined,
-              },
+              // Upload separately with strict error handling and event-scoped authentication.
+              dryRun: true,
             }),
           ]
         : []),
@@ -99,7 +93,6 @@ export function createRollupConfig({
 const config = createRollupConfig({
   minify: true,
   bundleAnalysis: process.env.CODECOV_BUNDLE_ANALYSIS === 'true',
-  analysisDryRun: process.env.CODECOV_BUNDLE_DRY_RUN === 'true',
 });
 
 export default config;

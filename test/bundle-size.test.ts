@@ -19,6 +19,7 @@ const headSha = 'a'.repeat(40);
 const baseSha = 'b'.repeat(40);
 const marker = '<!-- mcp-mail-server:bundle-size -->';
 
+/** Provide isolated run/PR state and a recording API for comment-publication boundary tests. */
 function fixture() {
   const report: BundleReport = {
     schemaVersion: 1,
@@ -247,9 +248,12 @@ test('PR workflows stay unprivileged and the comment workflow runs only trusted 
   assert.match(reporter, /artifact-ids: \$\{\{ steps\.artifact\.outputs\.id \}\}/);
 });
 
-test('optional offline Codecov analysis does not change the published CLI bundle', async () => {
+test('optional offline Codecov analysis does not change the published CLI bundle or use the network', async t => {
+  const network = t.mock.method(globalThis, 'fetch', () => {
+    throw new Error('Builds must not upload Codecov data');
+  });
   const generate = async (bundleAnalysis: boolean) => {
-    const config = createRollupConfig({ minify: true, bundleAnalysis, analysisDryRun: true });
+    const config = createRollupConfig({ minify: true, bundleAnalysis });
     const bundle = await rollup(config);
     try {
       return await bundle.generate(config.output);
@@ -265,4 +269,5 @@ test('optional offline Codecov analysis does not change the published CLI bundle
   assert.equal(normalEntry.code, analysisEntry.code);
   assert.equal(normal.output.length, 1, 'Normal builds must not emit analysis files');
   assert.ok(analysis.output.some(item => item.fileName.endsWith('-stats.json')));
+  assert.equal(network.mock.callCount(), 0);
 });

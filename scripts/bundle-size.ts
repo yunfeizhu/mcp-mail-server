@@ -49,10 +49,12 @@ interface PullRequest {
   base: { sha: string; ref: string; repo: { full_name: string } };
 }
 
+/** Measure raw bytes and reproducible level-9 gzip bytes, excluding external dependencies. */
 export function measureBundle(bytes: Uint8Array): Size {
   return { raw: bytes.byteLength, gzip: gzipSync(bytes, { level: 9 }).byteLength };
 }
 
+/** Reject malformed artifact identities and unbounded size values before rendering or API use. */
 export function validateBundleReport(value: unknown): BundleReport {
   assert.ok(value && typeof value === 'object', 'Invalid bundle report');
   const report = value as BundleReport;
@@ -73,6 +75,7 @@ export function validateBundleReport(value: unknown): BundleReport {
   return report;
 }
 
+/** Format a signed size delta, leaving percentage undefined for an empty baseline. */
 function change(before: number, after: number): string {
   const difference = after - before;
   const bytes = `${difference > 0 ? '+' : ''}${difference.toLocaleString('en-US')} B`;
@@ -83,6 +86,7 @@ function change(before: number, after: number): string {
   return `${bytes} (${percent > 0 ? '+' : ''}${percent.toFixed(2)}%)`;
 }
 
+/** Render validated measurements as fixed Markdown with commit and workflow provenance. */
 export function renderBundleReport(value: unknown, runId: number): string {
   const report = validateBundleReport(value);
   assert.ok(Number.isSafeInteger(runId) && runId > 0, 'Invalid workflow run');
@@ -108,6 +112,7 @@ export function renderBundleReport(value: unknown, runId: number): string {
   ].join('\n');
 }
 
+/** Accept only a successful PR run of this repository's exact measurement workflow. */
 export async function getBundleRun(api: BundleGitHubRequest, runId: number): Promise<BundleRun> {
   assert.ok(Number.isSafeInteger(runId) && runId > 0, 'Invalid workflow run');
   const run = (await api(`${root}/actions/runs/${runId}`)) as BundleRun;
@@ -122,6 +127,10 @@ export async function getBundleRun(api: BundleGitHubRequest, runId: number): Pro
   return run;
 }
 
+/**
+ * Publish one marked bot comment after checking the run, PR association, and current commits.
+ * Skip stale or closed PRs and never modify comments belonging to another author.
+ */
 export async function publishBundleReport(
   api: BundleGitHubRequest,
   runId: number,
@@ -139,6 +148,7 @@ export async function publishBundleReport(
     'Report PR is not associated with this workflow commit',
   );
 
+  /** Re-read the PR so an update during comment lookup cannot publish stale measurements. */
   const getCurrentPullRequest = async (): Promise<PullRequest | undefined> => {
     const pr = (await api(`${root}/pulls/${report.pullRequest}`)) as PullRequest;
     assert.equal(pr.number, report.pullRequest, 'Unexpected PR');
