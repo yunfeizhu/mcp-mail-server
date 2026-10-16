@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.2](https://github.com/yunfeizhu/mcp-mail-server/compare/v2.1.1...v2.1.2) (2026-10-16)
+
+
+### Bug Fixes
+
+* preserve mail identities and bound styled replies ([6b4977d](https://github.com/yunfeizhu/mcp-mail-server/commit/6b4977d6dade728b1ce96a46e0c61d3d5f776d1f))
+
 ## [2.1.1](https://github.com/yunfeizhu/mcp-mail-server/compare/v2.1.0...v2.1.1) (2026-10-14)
 
 ### Bug Fixes
