@@ -4,6 +4,16 @@
 
 <!-- release-changelog:start -->
 
+## [2.1.3] - 2026-11-13
+
+<!-- release-source-sha256: 986d3c99ee3f61dc95ada0019defb8e00a31abcd0cd6a820204a5c948c305d86 -->
+
+### 修复
+
+- 将 Nodemailer 升级到 `10.5.0`、MailParser 升级到 `3.14.3`，移除 Nodemailer 9.x。修复嵌套注释和地址组分号导致的收件人误解析；邮箱地址本身含有 `<` 或 `>` 时会在发送前被拒绝，避免 SMTP 库静默改写。普通的 `显示名 <邮箱>` 写法不受影响。([384afd6](https://github.com/yunfeizhu/mcp-mail-server/commit/384afd6f838922246316f2788e158af726624494))
+
+<!-- release-changelog:end -->
+
 ## [2.1.2] - 2026-10-16
 
 <!-- release-source-sha256: a4841de261bd07d71dd1f35185b49d35799a6a55fdf1e617a5a5f583b1b2c28c -->
@@ -11,8 +21,6 @@
 ### 修复
 
 - 修复邮件收件人解析和回复边界问题：保留包含撇号、特殊符号、引号或 Unicode 字符的完整地址；邮箱目录名保留首尾空格，避免读取、删除或移动到错误目录；长引用按最终带样式的 HTML 大小裁剪；未回复判断改用区分大小写、支持等价引号写法的线程引用，不再受同一秒内的回复或邮件迁移后的存储日期影响。([6b4977d](https://github.com/yunfeizhu/mcp-mail-server/commit/6b4977d6dade728b1ce96a46e0c61d3d5f776d1f))
-
-<!-- release-changelog:end -->
 
 ## [2.1.1] - 2026-10-14
 

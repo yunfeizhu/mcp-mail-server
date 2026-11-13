@@ -455,6 +455,17 @@ Maintainers must enable Actions-created PRs and configure the npm trusted publis
 <!-- release-notes:start -->
 
 <details open>
+<summary><strong>v2.1.3</strong> — 2026-11-13</summary>
+
+### Bug Fixes
+
+- upgrade mail dependencies for address parsing security ([384afd6](https://github.com/yunfeizhu/mcp-mail-server/commit/384afd6f838922246316f2788e158af726624494))
+
+</details>
+
+<!-- release-notes:end -->
+
+<details>
 <summary><strong>v2.1.2</strong> — 2026-10-16</summary>
 
 ### Bug Fixes
@@ -462,8 +473,6 @@ Maintainers must enable Actions-created PRs and configure the npm trusted publis
 - preserve mail identities and bound styled replies ([6b4977d](https://github.com/yunfeizhu/mcp-mail-server/commit/6b4977d6dade728b1ce96a46e0c61d3d5f776d1f))
 
 </details>
-
-<!-- release-notes:end -->
 
 <details>
 <summary><strong>v2.1.1</strong> — 2026-10-14</summary>

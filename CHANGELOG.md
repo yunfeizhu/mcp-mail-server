@@ -4,10 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [2.1.3](https://github.com/yunfeizhu/mcp-mail-server/compare/v2.1.2...v2.1.3) (2026-11-13)
 
-
 ### Bug Fixes
 
-* upgrade mail dependencies for address parsing security ([384afd6](https://github.com/yunfeizhu/mcp-mail-server/commit/384afd6f838922246316f2788e158af726624494))
+- upgrade mail dependencies for address parsing security ([384afd6](https://github.com/yunfeizhu/mcp-mail-server/commit/384afd6f838922246316f2788e158af726624494))
 
 ## [2.1.2](https://github.com/yunfeizhu/mcp-mail-server/compare/v2.1.1...v2.1.2) (2026-10-16)
 
