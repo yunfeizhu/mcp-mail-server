@@ -1,4 +1,10 @@
-import nodemailer, { type SendMailOptions, type Transporter } from 'nodemailer';
+import nodemailer, {
+  type SendMailOptions,
+  type SMTPSentMessageInfo,
+  type SMTPTransportOptions,
+  type Transporter,
+} from 'nodemailer';
+import addressparser from 'nodemailer/lib/addressparser';
 
 export interface SMTPConfig {
   host: string;
@@ -36,8 +42,18 @@ export interface EmailResult {
   rejected: string[];
 }
 
+/** Reject mailbox characters that Nodemailer would silently rewrite before SMTP delivery. */
+function assertSmtpAddressList(value: string): void {
+  if (
+    /[<>]/.test(value) &&
+    addressparser(value, { flatten: true }).some(({ address }) => /[<>]/.test(address))
+  ) {
+    throw new Error('SMTP envelope addresses cannot contain literal angle brackets');
+  }
+}
+
 export class SMTPClient {
-  private transporter: Transporter | null = null;
+  private transporter: Transporter<SMTPSentMessageInfo, SMTPTransportOptions> | null = null;
   private config: SMTPConfig;
 
   constructor(config: SMTPConfig) {
@@ -88,15 +104,18 @@ export class SMTPClient {
     if (value === undefined) {
       return undefined;
     }
-    return (Array.isArray(value) ? value : [value]).map(address =>
-      /^"(?:[^"\\]|\\.)*"@[^\s<>@]+$/.test(address) ? { name: '', address } : address,
-    );
+    return (Array.isArray(value) ? value : [value]).map(address => {
+      assertSmtpAddressList(address);
+      return /^"(?:[^"\\]|\\.)*"@[^\s<>@]+$/.test(address) ? { name: '', address } : address;
+    });
   }
 
   /** Reuse identical address and MIME options for actual delivery and the saved Sent copy. */
   private createMailOptions(options: EmailOptions): SendMailOptions {
+    const from = options.from || this.config.fromAddress || this.config.username;
+    assertSmtpAddressList(from);
     return {
-      from: options.from || this.config.fromAddress || this.config.username,
+      from,
       to: this.prepareAddressList(options.to),
       cc: this.prepareAddressList(options.cc),
       bcc: this.prepareAddressList(options.bcc),
@@ -137,13 +156,13 @@ export class SMTPClient {
       streamTransport: true,
       buffer: true,
       newline: 'windows',
-    } as any);
+    });
 
     try {
-      const result = (await streamTransport.sendMail({
+      const result = await streamTransport.sendMail({
         ...this.createMailOptions(options),
         messageId: messageId || options.messageId,
-      })) as any;
+      });
       if (!Buffer.isBuffer(result.message)) {
         throw new Error('Nodemailer did not return a buffered raw message');
       }

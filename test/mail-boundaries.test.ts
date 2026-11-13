@@ -144,6 +144,121 @@ test('reply-all flattens groups and preserves special Reply-To, To, and CC addre
   assert.deepEqual(extractEmailsFromAddressField({ value: [{ name: 'No address' }] }), []);
 });
 
+for (const [name, header, expected] of [
+  [
+    'nested address comment',
+    'Contact (outer(inner) <unexpected@example.invalid>) <expected@example.invalid>',
+    'expected@example.invalid',
+  ],
+  [
+    'semicolon in a group comment',
+    'Team: (note; <unexpected@example.invalid>) <expected@example.invalid>;',
+    'expected@example.invalid',
+  ],
+  [
+    'semicolon in a quoted group display name',
+    'Team: "note; <unexpected@example.invalid>" <expected@example.invalid>;',
+    'expected@example.invalid',
+  ],
+] as const) {
+  test(`address syntax cannot redirect a reply: ${name}`, async t => {
+    const own = 'me@example.invalid';
+    const parsed = await simpleParser(
+      [
+        'From: sender@example.invalid',
+        `To: ${own}`,
+        `Reply-To: ${header}`,
+        '',
+        'Synthetic message',
+      ].join('\r\n'),
+    );
+    const recipients = buildReplyRecipients(
+      extractEmailsFromAddressField(parsed.from).join(', '),
+      extractEmailsFromAddressField(parsed.replyTo).join(', '),
+      own,
+      undefined,
+      [own],
+      false,
+    );
+    const smtp = new SMTPClient({
+      host: 'localhost',
+      port: 465,
+      username: own,
+      password: 'not-used',
+    }) as any;
+    const stream = nodemailer.createTransport({ streamTransport: true, buffer: true });
+    t.after(() => stream.close());
+    const mailOptions = { subject: 'Synthetic reply', text: 'Offline' };
+    const [directSend, reply] = await Promise.all([
+      stream.sendMail(smtp.createMailOptions({ ...mailOptions, to: header })),
+      stream.sendMail(smtp.createMailOptions({ ...mailOptions, ...recipients })),
+    ]);
+
+    assert.deepEqual(
+      {
+        direct: extractEmailsFromAddressField(header),
+        reply: recipients.to,
+        directEnvelope: directSend.envelope.to,
+        replyEnvelope: reply.envelope.to,
+      },
+      {
+        direct: [expected],
+        reply: [expected],
+        directEnvelope: [expected],
+        replyEnvelope: [expected],
+      },
+    );
+  });
+}
+
+for (const bracket of ['<', '>']) {
+  test(`preserve quoted ${bracket} on read but reject it before SMTP can rewrite the mailbox`, async () => {
+    const own = 'me@example.invalid';
+    const address = `"name@unexpected.example.invalid${bracket}"@expected.example.invalid`;
+    const header = `<${address}>`;
+    const parsed = await simpleParser(`From: ${header}\r\nTo: ${own}\r\n\r\nSynthetic message`);
+    const recipients = buildReplyRecipients(
+      extractEmailsFromAddressField(parsed.from).join(', '),
+      undefined,
+      own,
+      undefined,
+      [own],
+      false,
+    );
+    assert.deepEqual(extractEmailsFromAddressField(header), [address]);
+    assert.deepEqual(recipients.to, [address]);
+
+    const smtp = new SMTPClient({
+      host: 'localhost',
+      port: 465,
+      username: own,
+      password: 'not-used',
+    }) as any;
+    smtp.transporter = {
+      sendMail() {
+        assert.fail('Delivery must not reach the transport for an unsupported mailbox');
+      },
+    };
+    const base = { to: own, subject: 'Synthetic message', text: 'Offline' };
+    for (const options of [
+      { ...base, to: header },
+      { ...base, ...recipients },
+      { ...base, cc: header },
+      { ...base, bcc: header },
+      { ...base, from: header },
+    ]) {
+      await assert.rejects(
+        smtp.sendMail(options),
+        /SMTP envelope addresses cannot contain literal angle brackets/,
+      );
+      await assert.rejects(
+        smtp.buildRawMessage(options),
+        /SMTP envelope addresses cannot contain literal angle brackets/,
+      );
+    }
+  });
+}
+
 /** Exercise real mailbox selection and UID mutation using an in-memory IMAP transport. */
 async function mailboxFixture(nativeMove: boolean = true) {
   const { MailMCPServer } = await loadRuntime();

@@ -64,8 +64,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "imap": "^0.8.19",
-    "mailparser": "^3.9.14",
-    "nodemailer": "^9.0.3",
+    "mailparser": "^3.14.3",
+    "nodemailer": "^10.5.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -76,9 +76,7 @@
     "@rollup/plugin-node-resolve": "^15.0.0",
     "@rollup/plugin-terser": "^1.0.0",
     "@types/imap": "^0.8.42",
-    "@types/mailparser": "^3.4.6",
     "@types/node": "^22.20.1",
-    "@types/nodemailer": "^8.0.1",
     "eslint": "^10.7.0",
     "eslint-config-prettier": "^10.1.8",
     "jiti": "^2.7.0",
