@@ -1,4 +1,4 @@
-import addressparser from 'nodemailer/lib/addressparser/index.js';
+import addressparser from 'nodemailer/lib/addressparser';
 import type { EmailSignature } from './mail-types';
 
 export interface MailContent {
